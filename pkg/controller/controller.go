@@ -583,6 +583,14 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 	}
 
 	for _, crd := range conf.CustomResources {
+		flag, err := utils.CheckCRDExists(dynamicClient, crd.Resource, crd.Version)
+		if err != nil {
+			logrus.WithField("pkg", "kubewatch").Errorf("Error checking if CRD exists: %v", err)
+		}
+		if !flag {
+			logrus.WithField("pkg", "kubewatch").Errorf("CRD %s not found", crd.Resource)
+			continue
+		}
 		informer := cache.NewSharedIndexInformer(
 			&cache.ListWatch{
 				ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
@@ -608,7 +616,6 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 		c := newResourceController(kubeClient, eventHandler, informer, crd.Resource, fmt.Sprintf("%s/%s", crd.Group, crd.Version))
 		stopCh := make(chan struct{})
 		defer close(stopCh)
-
 		go c.Run(stopCh)
 	}
 
