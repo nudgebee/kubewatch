@@ -40,10 +40,13 @@ import (
 	networking_v1 "k8s.io/api/networking/v1"
 	rbac_v1 "k8s.io/api/rbac/v1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
@@ -89,11 +92,14 @@ func objName(obj interface{}) string {
 // Start prepares watchers and run their controllers, then waits for process termination signals
 func Start(conf *config.Config, eventHandler handlers.Handler) {
 	var kubeClient kubernetes.Interface
+	var dynamicClient dynamic.Interface
 
 	if _, err := rest.InClusterConfig(); err != nil {
 		kubeClient = utils.GetClientOutOfCluster()
+		dynamicClient = utils.GetDynamicClientOutOfCluster()
 	} else {
 		kubeClient = utils.GetClient()
+		dynamicClient = utils.GetDynamicClient()
 	}
 
 	// User Configured Events
@@ -540,6 +546,39 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 		defer close(stopCh)
 
 		go c.Run(stopCh)
+	}
+	if conf.Resource.Rollout {
+		flag, err := utils.CheckCRDExists(dynamicClient, "rollouts.argoproj.io", "v1alpha1")
+		if err != nil {
+			logrus.WithField("pkg", "kubewatch").Errorf("Error checking if CRD exists: %v", err)
+		}
+		if flag {
+			// Define the GVR (Group-Version-Resource) for the Argo Rollout CRD
+			rolloutGVR := schema.GroupVersionResource{
+				Group:    "argoproj.io",
+				Version:  "v1alpha1",
+				Resource: "rollouts",
+			}
+
+			informer := cache.NewSharedIndexInformer(&cache.ListWatch{
+				ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
+					return dynamicClient.Resource(rolloutGVR).Namespace(conf.Namespace).List(context.Background(), options)
+				},
+				WatchFunc: func(options meta_v1.ListOptions) (watch.Interface, error) {
+					return dynamicClient.Resource(rolloutGVR).Namespace(conf.Namespace).Watch(context.Background(), options)
+				},
+			},
+				&unstructured.Unstructured{},
+				0, //Skip resync
+				cache.Indexers{},
+			)
+
+			c := newResourceController(kubeClient, eventHandler, informer, "Rollout", rolloutGVR.Version)
+			stopCh := make(chan struct{})
+			defer close(stopCh)
+
+			go c.Run(stopCh)
+		}
 	}
 
 	sigterm := make(chan os.Signal, 1)
