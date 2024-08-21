@@ -583,7 +583,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 	}
 
 	for _, crd := range conf.CustomResources {
-		flag, err := utils.CheckCRDExists(dynamicClient, crd.Resource, crd.Version)
+		flag, err := utils.CheckCRDExists(dynamicClient, fmt.Sprintf("%s.%s", crd.Resource, crd.Group), crd.Version)
 		if err != nil {
 			logrus.WithField("pkg", "kubewatch").Errorf("Error checking if CRD exists: %v", err)
 		}
