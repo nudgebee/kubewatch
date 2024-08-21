@@ -23,7 +23,21 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// GetClient returns a k8s clientset to the request from inside of cluster
+// GetDynamicClient returns a k8s dynamic clientset to the request from inside of cluster
+func GetDynamicClient() dynamic.Interface {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		logrus.Fatalf("Can not get kubernetes config: %v", err)
+	}
+
+	clientset, err := dynamic.NewForConfig(config)
+	if err != nil {
+		logrus.Fatalf("Can not create dynamic kubernetes client: %v", err)
+	}
+
+	return clientset
+}
+
 func GetClient() kubernetes.Interface {
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -36,20 +50,6 @@ func GetClient() kubernetes.Interface {
 	}
 
 	return clientset
-}
-
-func GetDynamicClient() dynamic.Interface {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		return nil
-	}
-
-	dynClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return nil
-	}
-
-	return dynClient
 }
 
 func buildOutOfClusterConfig() (*rest.Config, error) {
@@ -75,18 +75,19 @@ func GetClientOutOfCluster() kubernetes.Interface {
 	return clientset
 }
 
+// GetDynamicClientOutOfCluster returns a k8s dynamic clientset to the request from outside of cluster
 func GetDynamicClientOutOfCluster() dynamic.Interface {
 	config, err := buildOutOfClusterConfig()
 	if err != nil {
-		return nil
+		logrus.Fatalf("Can not get kubernetes config: %v", err)
 	}
 
-	dynClient, err := dynamic.NewForConfig(config)
+	clientset, err := dynamic.NewForConfig(config)
 	if err != nil {
-		return nil
+		logrus.Fatalf("Can not get kubernetes config: %v", err)
 	}
 
-	return dynClient
+	return clientset
 }
 
 // GetObjectMetaData returns metadata of a given k8s object
