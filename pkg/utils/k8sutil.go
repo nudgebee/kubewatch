@@ -1,18 +1,23 @@
 package utils
 
 import (
+	"context"
 	"os"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 	apps_v1 "k8s.io/api/apps/v1"
 	batch_v1 "k8s.io/api/batch/v1"
 	api_v1 "k8s.io/api/core/v1"
+	events_v1 "k8s.io/api/events/v1"
 	ext_v1beta1 "k8s.io/api/extensions/v1beta1"
 	networking_v1 "k8s.io/api/networking/v1"
 	rbac_v1 "k8s.io/api/rbac/v1"
-	events_v1 "k8s.io/api/events/v1"
 	rbac_v1beta1 "k8s.io/api/rbac/v1beta1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -31,6 +36,20 @@ func GetClient() kubernetes.Interface {
 	}
 
 	return clientset
+}
+
+func GetDynamicClient() dynamic.Interface {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil
+	}
+
+	dynClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil
+	}
+
+	return dynClient
 }
 
 func buildOutOfClusterConfig() (*rest.Config, error) {
@@ -54,6 +73,20 @@ func GetClientOutOfCluster() kubernetes.Interface {
 	}
 
 	return clientset
+}
+
+func GetDynamicClientOutOfCluster() dynamic.Interface {
+	config, err := buildOutOfClusterConfig()
+	if err != nil {
+		return nil
+	}
+
+	dynClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil
+	}
+
+	return dynClient
 }
 
 // GetObjectMetaData returns metadata of a given k8s object
@@ -104,4 +137,35 @@ func GetObjectMetaData(obj interface{}) (objectMeta meta_v1.ObjectMeta) {
 		objectMeta = object.ObjectMeta
 	}
 	return objectMeta
+}
+
+func CheckCRDExists(dynamicClient dynamic.Interface, crdName, version string) (bool, error) {
+	gvr := schema.GroupVersionResource{
+		Group:    "apiextensions.k8s.io",
+		Version:  "v1",
+		Resource: "customresourcedefinitions",
+	}
+
+	crd, err := dynamicClient.Resource(gvr).Get(context.Background(), crdName, meta_v1.GetOptions{})
+	if err != nil {
+		if !strings.Contains(err.Error(), "not found") {
+			return false, err
+		}
+		return false, nil
+	}
+
+	versions, found, err := unstructured.NestedSlice(crd.Object, "spec", "versions")
+	if err != nil || !found {
+		return false, err
+	}
+
+	for _, v := range versions {
+		if vMap, ok := v.(map[string]interface{}); ok {
+			if vStr, found := vMap["name"].(string); found && vStr == version {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
 }

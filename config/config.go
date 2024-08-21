@@ -71,6 +71,7 @@ type Resource struct {
 	HPA                   bool `json:"hpa"`
 	Event                 bool `json:"event"`
 	CoreEvent             bool `json:"coreevent"`
+	Rollout               bool `json:"rollout"`
 }
 
 // Config struct contains kubewatch configuration
