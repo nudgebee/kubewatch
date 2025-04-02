@@ -1,21 +1,26 @@
-FROM golang AS builder
-MAINTAINER "Cuong Manh Le <cuong.manhle.vn@gmail.com>"
+# Use Golang Alpine as the builder stage
+FROM golang:alpine AS builder
 
-RUN apt-get update && \
-    dpkg --add-architecture arm64 &&\
-    apt-get install -y --no-install-recommends build-essential && \
-    apt-get clean && \
-    mkdir -p "$GOPATH/src/github.com/bitnami-labs/kubewatch"
+# Install dependencies
+RUN apk add --no-cache build-base
 
-ADD . "$GOPATH/src/github.com/bitnami-labs/kubewatch"
+# Set up working directory
+WORKDIR /src/kubewatch
 
-RUN cd "$GOPATH/src/github.com/bitnami-labs/kubewatch" && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=$(dpkg --print-architecture) go build -a --installsuffix cgo --ldflags="-s" -o /kubewatch
+# Copy source code
+COPY . .
 
-FROM cgr.dev/chainguard/bash:latest
+# Build the binary
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -ldflags="-s -w" -o /kubewatch
 
+# Use Alpine as the final image
+FROM alpine:latest
+
+# Copy the built binary
 COPY --from=builder /kubewatch /bin/kubewatch
 
+# Set configuration directory
 ENV KW_CONFIG=/opt/bitnami/kubewatch
 
+# Set entrypoint
 ENTRYPOINT ["/bin/kubewatch"]
