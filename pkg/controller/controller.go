@@ -29,9 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-
 	"github.com/bitnami-labs/kubewatch/config"
 	"github.com/bitnami-labs/kubewatch/pkg/event"
 	"github.com/bitnami-labs/kubewatch/pkg/handlers"
@@ -619,7 +616,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 				cache.Indexers{},
 			)
 
-			c := newResourceController(kubeClient, eventHandler, informer, "Rollout", rolloutGVR.Version)
+			c := newResourceController(kubeClient, eventHandler, informer, "Rollout", rolloutGVR.Version, kubewatchEventsMetrics)
 			stopCh := make(chan struct{})
 			defer close(stopCh)
 
@@ -658,7 +655,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, crd.Resource, fmt.Sprintf("%s/%s", crd.Group, crd.Version))
+		c := newResourceController(kubeClient, eventHandler, informer, crd.Resource, fmt.Sprintf("%s/%s", crd.Group, crd.Version), kubewatchEventsMetrics)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 		go c.Run(stopCh)
