@@ -42,4 +42,4 @@ jobs:
           file: 'Dockerfile'
           push: true
           tags: |
-            280501305789.dkr.ecr.us-east-1.amazonaws.com/kubewatch:${{ env.tag }}
+            864186153326.dkr.ecr.us-east-1.amazonaws.com/kubewatch:${{ env.tag }}
