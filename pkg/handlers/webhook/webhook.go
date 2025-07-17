@@ -20,15 +20,18 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"github.com/sirupsen/logrus"
 	"os"
 
+	"github.com/sirupsen/logrus"
+
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"net/http"
 	"time"
 
 	"github.com/bitnami-labs/kubewatch/config"
+	"github.com/bitnami-labs/kubewatch/pkg/collector"
 	"github.com/bitnami-labs/kubewatch/pkg/event"
 )
 
@@ -48,7 +51,8 @@ Command line flags will override environment variables
 // Webhook handler implements handler.Handler interface,
 // Notify event to Webhook channel
 type Webhook struct {
-	Url string
+	Url         string
+	Compression bool
 }
 
 // WebhookMessage for messages
@@ -56,6 +60,14 @@ type WebhookMessage struct {
 	EventMeta EventMeta `json:"eventmeta"`
 	Text      string    `json:"text"`
 	Time      time.Time `json:"time"`
+}
+
+// SyncWebhookMessage for sync operations - keeps same data but adds type field
+type SyncWebhookMessage struct {
+	Type            string                            `json:"type"`
+	Timestamp       time.Time                         `json:"timestamp"`
+	ClusterSnapshot collector.ClusterWorkloadSnapshot `json:"clusterSnapshot"`
+	Metadata        collector.WorkloadSyncMetadata    `json:"metadata"`
 }
 
 // EventMeta containes the meta data about the event occurred
@@ -71,6 +83,7 @@ func (m *Webhook) Init(c *config.Config) error {
 	url := c.Handler.Webhook.Url
 	cert := c.Handler.Webhook.Cert
 	tlsSkip := c.Handler.Webhook.TlsSkip
+	compression := c.Handler.Webhook.Compression
 
 	if url == "" {
 		url = os.Getenv("KW_WEBHOOK_URL")
@@ -80,6 +93,7 @@ func (m *Webhook) Init(c *config.Config) error {
 	}
 
 	m.Url = url
+	m.Compression = compression
 
 	if tlsSkip {
 		http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
@@ -113,6 +127,96 @@ func (m *Webhook) Handle(e event.Event) {
 	}
 
 	logrus.Printf("Message successfully sent to %s at %s ", m.Url, time.Now())
+}
+
+// HandleWorkloadSnapshot handles workload snapshot data
+func (m *Webhook) HandleWorkloadSnapshot(snapshot *collector.ClusterWorkloadSnapshot, metadata collector.WorkloadSyncMetadata) error {
+	message := &SyncWebhookMessage{
+		Type:            "cluster_snapshot",
+		Timestamp:       time.Now(),
+		ClusterSnapshot: *snapshot,
+		Metadata:        metadata,
+	}
+
+	if m.Compression {
+		return m.sendCompressedWorkloadSnapshot(message)
+	}
+	return m.sendSyncMessage(message)
+}
+
+// sendCompressedWorkloadSnapshot sends compressed workload snapshot
+func (m *Webhook) sendCompressedWorkloadSnapshot(message *SyncWebhookMessage) error {
+	// Serialize to JSON
+	jsonData, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("failed to marshal workload snapshot: %w", err)
+	}
+
+	// Compress with gzip
+	var compressed bytes.Buffer
+	gzWriter := gzip.NewWriter(&compressed)
+	if _, err := gzWriter.Write(jsonData); err != nil {
+		gzWriter.Close()
+		return fmt.Errorf("failed to compress workload snapshot: %w", err)
+	}
+	if err := gzWriter.Close(); err != nil {
+		return fmt.Errorf("failed to close gzip writer: %w", err)
+	}
+
+	// Create HTTP request with proper headers
+	req, err := http.NewRequest("POST", m.Url, &compressed)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("X-Kubewatch-Event-Type", "cluster_snapshot")
+	req.Header.Set("X-Kubewatch-Compressed", "true")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send compressed workload snapshot: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("webhook returned error status: %d", resp.StatusCode)
+	}
+
+	logrus.Printf("Workload snapshot successfully sent to %s (compressed: %d bytes) at %s",
+		m.Url, compressed.Len(), time.Now())
+	return nil
+}
+
+// sendSyncMessage sends uncompressed sync message
+func (m *Webhook) sendSyncMessage(message *SyncWebhookMessage) error {
+	jsonData, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("failed to marshal sync message: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", m.Url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send sync message: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("webhook returned error status: %d", resp.StatusCode)
+	}
+
+	logrus.Printf("Sync message successfully sent to %s at %s", m.Url, time.Now())
+	return nil
 }
 
 func checkMissingWebhookVars(s *Webhook) error {

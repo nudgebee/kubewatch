@@ -32,6 +32,7 @@ import (
 	"github.com/bitnami-labs/kubewatch/config"
 	"github.com/bitnami-labs/kubewatch/pkg/event"
 	"github.com/bitnami-labs/kubewatch/pkg/handlers"
+	"github.com/bitnami-labs/kubewatch/pkg/scheduler"
 	"github.com/bitnami-labs/kubewatch/pkg/utils"
 	"github.com/sirupsen/logrus"
 
@@ -591,11 +592,33 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 		go c.Run(stopCh)
 	}
 	if conf.Resource.Rollout {
-		flag, err := utils.CheckCRDExists(dynamicClient, "rollouts.argoproj.io", "v1alpha1")
+		rolloutCRD := "rollouts.argoproj.io"
+		rolloutVersion := "v1alpha1"
+		
+		logrus.WithFields(logrus.Fields{
+			"pkg":      "kubewatch",
+			"crd":      rolloutCRD,
+			"version":  rolloutVersion,
+			"resource": "rollouts",
+		}).Info("Checking Argo Rollout CRD availability")
+		
+		flag, err := utils.CheckCRDExists(dynamicClient, rolloutCRD, rolloutVersion)
 		if err != nil {
-			logrus.WithField("pkg", "kubewatch").Errorf("Error checking if CRD exists: %v", err)
-		}
-		if flag {
+			logrus.WithFields(logrus.Fields{
+				"pkg":      "kubewatch",
+				"crd":      rolloutCRD,
+				"version":  rolloutVersion,
+				"resource": "rollouts",
+			}).Errorf("Error checking if Argo Rollout CRD exists: %v", err)
+			// Continue without rollout monitoring
+		} else if flag {
+			logrus.WithFields(logrus.Fields{
+				"pkg":      "kubewatch",
+				"crd":      rolloutCRD,
+				"version":  rolloutVersion,
+				"resource": "rollouts",
+			}).Info("Starting watcher for Argo Rollout CRD")
+			
 			// Define the GVR (Group-Version-Resource) for the Argo Rollout CRD
 			rolloutGVR := schema.GroupVersionResource{
 				Group:    "argoproj.io",
@@ -605,10 +628,28 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 
 			informer := cache.NewSharedIndexInformer(&cache.ListWatch{
 				ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
-					return dynamicClient.Resource(rolloutGVR).Namespace(conf.Namespace).List(context.Background(), options)
+					result, err := dynamicClient.Resource(rolloutGVR).Namespace(conf.Namespace).List(context.Background(), options)
+					if err != nil {
+						logrus.WithFields(logrus.Fields{
+							"pkg":      "kubewatch",
+							"crd":      rolloutCRD,
+							"version":  rolloutVersion,
+							"resource": "rollouts",
+						}).Errorf("Failed to list Argo Rollout resources: %v", err)
+					}
+					return result, err
 				},
 				WatchFunc: func(options meta_v1.ListOptions) (watch.Interface, error) {
-					return dynamicClient.Resource(rolloutGVR).Namespace(conf.Namespace).Watch(context.Background(), options)
+					result, err := dynamicClient.Resource(rolloutGVR).Namespace(conf.Namespace).Watch(context.Background(), options)
+					if err != nil {
+						logrus.WithFields(logrus.Fields{
+							"pkg":      "kubewatch",
+							"crd":      rolloutCRD,
+							"version":  rolloutVersion,
+							"resource": "rollouts",
+						}).Errorf("Failed to watch Argo Rollout resources: %v", err)
+					}
+					return result, err
 				},
 			},
 				&unstructured.Unstructured{},
@@ -621,33 +662,87 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			defer close(stopCh)
 
 			go c.Run(stopCh)
+		} else {
+			logrus.WithFields(logrus.Fields{
+				"pkg":      "kubewatch",
+				"crd":      rolloutCRD,
+				"version":  rolloutVersion,
+				"resource": "rollouts",
+			}).Warnf("Argo Rollout CRD %s (version %s) not found in cluster, skipping rollout monitoring", rolloutCRD, rolloutVersion)
 		}
 	}
 
 	for _, crd := range conf.CustomResources {
-		flag, err := utils.CheckCRDExists(dynamicClient, fmt.Sprintf("%s.%s", crd.Resource, crd.Group), crd.Version)
+		crdName := fmt.Sprintf("%s.%s", crd.Resource, crd.Group)
+		crdVersion := crd.Version
+		
+		logrus.WithFields(logrus.Fields{
+			"pkg":      "kubewatch",
+			"crd":      crdName,
+			"version":  crdVersion,
+			"resource": crd.Resource,
+		}).Info("Checking CRD availability")
+		
+		flag, err := utils.CheckCRDExists(dynamicClient, crdName, crdVersion)
 		if err != nil {
-			logrus.WithField("pkg", "kubewatch").Errorf("Error checking if CRD exists: %v", err)
-		}
-		if !flag {
-			logrus.WithField("pkg", "kubewatch").Errorf("CRD %s not found", crd.Resource)
+			logrus.WithFields(logrus.Fields{
+				"pkg":      "kubewatch",
+				"crd":      crdName,
+				"version":  crdVersion,
+				"resource": crd.Resource,
+			}).Errorf("Error checking if CRD exists: %v", err)
 			continue
 		}
+		if !flag {
+			logrus.WithFields(logrus.Fields{
+				"pkg":      "kubewatch",
+				"crd":      crdName,
+				"version":  crdVersion,
+				"resource": crd.Resource,
+			}).Warnf("CRD %s (version %s) not found in cluster, skipping", crdName, crdVersion)
+			continue
+		}
+		
+		logrus.WithFields(logrus.Fields{
+			"pkg":      "kubewatch",
+			"crd":      crdName,
+			"version":  crdVersion,
+			"resource": crd.Resource,
+		}).Info("Starting watcher for CRD")
+		
 		informer := cache.NewSharedIndexInformer(
 			&cache.ListWatch{
 				ListFunc: func(options meta_v1.ListOptions) (runtime.Object, error) {
-					return dynamicClient.Resource(schema.GroupVersionResource{
+					result, err := dynamicClient.Resource(schema.GroupVersionResource{
 						Group:    crd.Group,
 						Version:  crd.Version,
 						Resource: crd.Resource,
 					}).List(context.Background(), options)
+					if err != nil {
+						logrus.WithFields(logrus.Fields{
+							"pkg":      "kubewatch",
+							"crd":      crdName,
+							"version":  crdVersion,
+							"resource": crd.Resource,
+						}).Errorf("Failed to list CRD resources: %v", err)
+					}
+					return result, err
 				},
 				WatchFunc: func(options meta_v1.ListOptions) (watch.Interface, error) {
-					return dynamicClient.Resource(schema.GroupVersionResource{
+					result, err := dynamicClient.Resource(schema.GroupVersionResource{
 						Group:    crd.Group,
 						Version:  crd.Version,
 						Resource: crd.Resource,
 					}).Watch(context.Background(), options)
+					if err != nil {
+						logrus.WithFields(logrus.Fields{
+							"pkg":      "kubewatch",
+							"crd":      crdName,
+							"version":  crdVersion,
+							"resource": crd.Resource,
+						}).Errorf("Failed to watch CRD resources: %v", err)
+					}
+					return result, err
 				},
 			},
 			&unstructured.Unstructured{},
@@ -655,10 +750,30 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, crd.Resource, fmt.Sprintf("%s/%s", crd.Group, crd.Version), kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, fmt.Sprintf("%s/%s", crd.Resource, crd.Group), fmt.Sprintf("%s/%s", crd.Group, crd.Version), kubewatchEventsMetrics)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 		go c.Run(stopCh)
+	}
+
+	// Start workload scheduler if enabled
+	if conf.Sync.Enabled && conf.Sync.WorkloadSnapshot.Enabled {
+		// Apply defaults to sync config
+		conf.SetSyncDefaults()
+		
+		// Validate sync configuration
+		if err := scheduler.ValidateConfig(conf); err != nil {
+			logrus.WithError(err).Error("Invalid sync configuration")
+		} else {
+			// Create workload scheduler
+			workloadScheduler := scheduler.NewWorkloadScheduler(kubeClient, conf, eventHandler)
+			if err := workloadScheduler.Start(); err != nil {
+				logrus.WithError(err).Error("Failed to start workload scheduler")
+			} else {
+				logrus.Info("Workload scheduler started successfully")
+				defer workloadScheduler.Stop()
+			}
+		}
 	}
 
 	sigterm := make(chan os.Signal, 1)
