@@ -101,9 +101,78 @@ func (ws *WorkloadScheduler) runPeriodicSync() {
 	}
 }
 
-// runSync executes a single sync operation
+// runSync executes a single sync operation with retry logic
 func (ws *WorkloadScheduler) runSync() {
 	ws.logger.Info("Starting workload sync")
+	startTime := time.Now()
+	
+	err := ws.runSyncWithRetry()
+	if err != nil {
+		ws.logger.WithError(err).Error("Failed to complete workload sync after all retries")
+		return
+	}
+	
+	duration := time.Since(startTime)
+	ws.logger.WithField("duration", duration).Info("Workload sync completed successfully")
+}
+
+// runSyncWithRetry executes sync operation with configurable retry logic
+func (ws *WorkloadScheduler) runSyncWithRetry() error {
+	var lastErr error
+	
+	// Parse retry intervals
+	initialInterval, err := time.ParseDuration(ws.config.Sync.Retry.InitialInterval)
+	if err != nil {
+		ws.logger.WithError(err).Warn("Invalid initial retry interval, using default")
+		initialInterval = 30 * time.Second
+	}
+	
+	maxInterval, err := time.ParseDuration(ws.config.Sync.Retry.MaxInterval)
+	if err != nil {
+		ws.logger.WithError(err).Warn("Invalid max retry interval, using default")
+		maxInterval = 10 * time.Minute
+	}
+	
+	currentInterval := initialInterval
+	
+	for attempt := 0; attempt <= ws.config.Sync.Retry.MaxRetries; attempt++ {
+		if attempt > 0 {
+			ws.logger.WithFields(logrus.Fields{
+				"attempt": attempt,
+				"backoff": currentInterval,
+			}).Info("Retrying workload sync after backoff")
+			time.Sleep(currentInterval)
+		}
+		
+		// Attempt sync operation
+		lastErr = ws.attemptSync()
+		if lastErr == nil {
+			if attempt > 0 {
+				ws.logger.WithField("attempt", attempt).Info("Workload sync succeeded after retry")
+			}
+			return nil
+		}
+		
+		// Log the failure
+		ws.logger.WithFields(logrus.Fields{
+			"attempt": attempt + 1,
+			"error":   lastErr,
+		}).Warn("Workload sync attempt failed")
+		
+		// Calculate next backoff interval
+		if attempt < ws.config.Sync.Retry.MaxRetries {
+			currentInterval = time.Duration(float64(currentInterval) * ws.config.Sync.Retry.Multiplier)
+			if currentInterval > maxInterval {
+				currentInterval = maxInterval
+			}
+		}
+	}
+	
+	return fmt.Errorf("workload sync failed after %d attempts: %w", ws.config.Sync.Retry.MaxRetries+1, lastErr)
+}
+
+// attemptSync performs a single sync attempt
+func (ws *WorkloadScheduler) attemptSync() error {
 	startTime := time.Now()
 	
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(ws.config.Sync.TimeoutSeconds)*time.Second)
@@ -112,18 +181,15 @@ func (ws *WorkloadScheduler) runSync() {
 	// Collect workload snapshot
 	snapshot, err := ws.collector.CollectWorkloadSnapshot(ctx, ws.config.Namespace)
 	if err != nil {
-		ws.logger.WithError(err).Error("Failed to collect workload snapshot")
-		return
+		return fmt.Errorf("failed to collect workload snapshot: %w", err)
 	}
 	
 	// Handle the snapshot based on handler type
 	if err := ws.handleWorkloadSnapshot(snapshot, startTime); err != nil {
-		ws.logger.WithError(err).Error("Failed to handle workload snapshot")
-		return
+		return fmt.Errorf("failed to handle workload snapshot: %w", err)
 	}
 	
-	duration := time.Since(startTime)
-	ws.logger.WithField("duration", duration).Info("Workload sync completed successfully")
+	return nil
 }
 
 // handleWorkloadSnapshot handles the workload snapshot based on the configured handler
@@ -196,6 +262,27 @@ func ValidateConfig(config *config.Config) error {
 	
 	if config.Sync.BatchSize <= 0 {
 		return fmt.Errorf("sync batch size must be positive")
+	}
+	
+	// Validate retry configuration
+	if config.Sync.Retry.MaxRetries < 0 {
+		return fmt.Errorf("retry max retries must be non-negative")
+	}
+	
+	if config.Sync.Retry.InitialInterval != "" {
+		if _, err := time.ParseDuration(config.Sync.Retry.InitialInterval); err != nil {
+			return fmt.Errorf("invalid retry initial interval format: %w", err)
+		}
+	}
+	
+	if config.Sync.Retry.MaxInterval != "" {
+		if _, err := time.ParseDuration(config.Sync.Retry.MaxInterval); err != nil {
+			return fmt.Errorf("invalid retry max interval format: %w", err)
+		}
+	}
+	
+	if config.Sync.Retry.Multiplier < 1.0 {
+		return fmt.Errorf("retry multiplier must be >= 1.0")
 	}
 	
 	return nil

@@ -378,8 +378,19 @@ type SyncConfig struct {
 	BatchSize      int    `json:"batchSize" yaml:"batchSize"`
 	TimeoutSeconds int    `json:"timeoutSeconds" yaml:"timeoutSeconds"`
 	
+	// Retry configuration for failed sync operations
+	Retry RetryConfig `json:"retry" yaml:"retry"`
+	
 	// Workload snapshot specific configuration
 	WorkloadSnapshot WorkloadSyncConfig `json:"workloadSnapshot" yaml:"workloadSnapshot"`
+}
+
+// RetryConfig contains retry configuration for failed sync operations
+type RetryConfig struct {
+	MaxRetries      int    `json:"maxRetries" yaml:"maxRetries"`           // Maximum number of retry attempts (default: 3)
+	InitialInterval string `json:"initialInterval" yaml:"initialInterval"` // Initial backoff interval (default: "30s")
+	MaxInterval     string `json:"maxInterval" yaml:"maxInterval"`         // Maximum backoff interval (default: "10m")
+	Multiplier      float64 `json:"multiplier" yaml:"multiplier"`           // Backoff multiplier (default: 2.0)
 }
 
 // WorkloadSyncConfig contains workload-specific sync settings
@@ -404,15 +415,20 @@ func (c *Config) SetSyncDefaults() {
 		c.Sync.TimeoutSeconds = 30
 	}
 	
-	// Set workload snapshot defaults
-	if c.Sync.WorkloadSnapshot.Enabled {
-		// Default to including nodes for workload context
-		if !c.Sync.WorkloadSnapshot.IncludeNodes {
-			c.Sync.WorkloadSnapshot.IncludeNodes = true
-		}
-		// Default to including resource status
-		if !c.Sync.WorkloadSnapshot.IncludeResourceStatus {
-			c.Sync.WorkloadSnapshot.IncludeResourceStatus = true
-		}
+	// Set retry defaults
+	if c.Sync.Retry.MaxRetries == 0 {
+		c.Sync.Retry.MaxRetries = 3
 	}
+	if c.Sync.Retry.InitialInterval == "" {
+		c.Sync.Retry.InitialInterval = "30s"
+	}
+	if c.Sync.Retry.MaxInterval == "" {
+		c.Sync.Retry.MaxInterval = "10m"
+	}
+	if c.Sync.Retry.Multiplier == 0 {
+		c.Sync.Retry.Multiplier = 2.0
+	}
+	
+	// Workload snapshot configuration is now fully user-controlled
+	// No automatic defaults are set to preserve user's explicit configuration
 }

@@ -400,6 +400,13 @@ func (w *WorkloadCollector) convertStatefulSetToServiceInfo(ss *apps_v1.Stateful
 func (w *WorkloadCollector) convertPodToServiceInfo(pod *api_v1.Pod) ServiceInfo {
 	resourceVersion := w.parseResourceVersion(pod.ResourceVersion)
 	
+	// Convert QOSClass to string safely
+	var qosClass *string
+	if pod.Status.QOSClass != "" {
+		qosStr := string(pod.Status.QOSClass)
+		qosClass = &qosStr
+	}
+	
 	serviceConfig := &ServiceConfig{
 		Labels:         w.ensureLabels(pod.Labels),
 		Containers:     w.extractContainers(pod.Spec.Containers),
@@ -407,7 +414,7 @@ func (w *WorkloadCollector) convertPodToServiceInfo(pod *api_v1.Pod) ServiceInfo
 		Owner:          w.extractOwners(pod.OwnerReferences),
 		Annotations:    w.convertAnnotations(pod.Annotations),
 		IP:             &pod.Status.PodIP,
-		QosClass:       (*string)(&pod.Status.QOSClass),
+		QosClass:       qosClass,
 		ServiceAccount: &pod.Spec.ServiceAccountName,
 	}
 	

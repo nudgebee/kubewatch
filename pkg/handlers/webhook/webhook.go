@@ -53,6 +53,7 @@ Command line flags will override environment variables
 type Webhook struct {
 	Url         string
 	Compression bool
+	httpClient  *http.Client
 }
 
 // WebhookMessage for messages
@@ -95,11 +96,14 @@ func (m *Webhook) Init(c *config.Config) error {
 	m.Url = url
 	m.Compression = compression
 
+	// Create TLS config
+	var tlsConfig *tls.Config
 	if tlsSkip {
-		http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		tlsConfig = &tls.Config{InsecureSkipVerify: true}
 	} else {
 		if cert == "" {
 			logrus.Printf("No webhook cert is given")
+			tlsConfig = &tls.Config{}
 		} else {
 			caCert, err := os.ReadFile(cert)
 			if err != nil {
@@ -108,9 +112,22 @@ func (m *Webhook) Init(c *config.Config) error {
 			}
 			caCertPool := x509.NewCertPool()
 			caCertPool.AppendCertsFromPEM(caCert)
-			http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: caCertPool}
+			tlsConfig = &tls.Config{RootCAs: caCertPool}
 		}
+	}
 
+	// Determine timeout - use sync timeout if available, otherwise default to 30s
+	timeout := 30 * time.Second
+	if c.Sync.TimeoutSeconds > 0 {
+		timeout = time.Duration(c.Sync.TimeoutSeconds) * time.Second
+	}
+
+	// Create dedicated HTTP client for this webhook
+	m.httpClient = &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: tlsConfig,
+		},
 	}
 
 	return checkMissingWebhookVars(m)
@@ -120,9 +137,22 @@ func (m *Webhook) Init(c *config.Config) error {
 func (m *Webhook) Handle(e event.Event) {
 	webhookMessage := prepareWebhookMessage(e, m)
 
-	err := postMessage(m.Url, webhookMessage)
+	message, err := json.Marshal(webhookMessage)
 	if err != nil {
-		logrus.Printf("%s\n", err)
+		logrus.Printf("Failed to marshal webhook message: %s\n", err)
+		return
+	}
+
+	req, err := http.NewRequest("POST", m.Url, bytes.NewBuffer(message))
+	if err != nil {
+		logrus.Printf("Failed to create request: %s\n", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	_, err = m.httpClient.Do(req)
+	if err != nil {
+		logrus.Printf("Failed to send webhook message: %s\n", err)
 		return
 	}
 
@@ -174,8 +204,7 @@ func (m *Webhook) sendCompressedWorkloadSnapshot(message *SyncWebhookMessage) er
 	req.Header.Set("X-Kubewatch-Event-Type", "cluster_snapshot")
 	req.Header.Set("X-Kubewatch-Compressed", "true")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := m.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send compressed workload snapshot: %w", err)
 	}
@@ -204,8 +233,7 @@ func (m *Webhook) sendSyncMessage(message *SyncWebhookMessage) error {
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := m.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send sync message: %w", err)
 	}
