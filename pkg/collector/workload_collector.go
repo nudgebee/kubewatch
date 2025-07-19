@@ -18,7 +18,6 @@ package collector
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"sync"
@@ -100,6 +99,9 @@ func (w *WorkloadCollector) CollectWorkloadSnapshot(ctx context.Context, namespa
 			return nil, err
 		}
 	}
+	
+	// Calculate aggregated values for nodes and namespaces
+	w.calculateAggregatedValues(snapshot)
 	
 	duration := time.Since(startTime)
 	w.logger.WithField("duration", duration).Info("Workload snapshot collection completed")
@@ -615,10 +617,23 @@ func (w *WorkloadCollector) convertNodeToNodeInfo(node *api_v1.Node) NodeInfo {
 		taints += fmt.Sprintf("%s=%s:%s", taint.Key, taint.Value, taint.Effect)
 	}
 	
-	// Convert node info to map
-	nodeInfoMap := make(map[string]interface{})
-	nodeInfoBytes, _ := json.Marshal(node.Status.NodeInfo)
-	json.Unmarshal(nodeInfoBytes, &nodeInfoMap)
+	// Convert node info to map with direct field access
+	nodeInfoMap := map[string]interface{}{
+		"machineID":                node.Status.NodeInfo.MachineID,
+		"systemUUID":               node.Status.NodeInfo.SystemUUID,
+		"bootID":                   node.Status.NodeInfo.BootID,
+		"kernelVersion":            node.Status.NodeInfo.KernelVersion,
+		"osImage":                  node.Status.NodeInfo.OSImage,
+		"containerRuntimeVersion":  node.Status.NodeInfo.ContainerRuntimeVersion,
+		"kubeletVersion":           node.Status.NodeInfo.KubeletVersion,
+		"operatingSystem":          node.Status.NodeInfo.OperatingSystem,
+		"architecture":             node.Status.NodeInfo.Architecture,
+	}
+	
+	// Add KubeProxyVersion if available (deprecated but may still be present)
+	if node.Status.NodeInfo.KubeProxyVersion != "" {
+		nodeInfoMap["kubeProxyVersion"] = node.Status.NodeInfo.KubeProxyVersion
+	}
 	
 	return NodeInfo{
 		Name:               node.Name,
@@ -629,11 +644,11 @@ func (w *WorkloadCollector) convertNodeToNodeInfo(node *api_v1.Node) NodeInfo {
 		Conditions:         conditions,
 		MemoryCapacity:     memoryCapacity,
 		MemoryAllocatable:  memoryAllocatable,
-		MemoryAllocated:    0, // Would need additional calculation
+		MemoryAllocated:    0, // Will be calculated in calculateAggregatedValues
 		CPUCapacity:        cpuCapacity,
 		CPUAllocatable:     cpuAllocatable,
-		CPUAllocated:       0, // Would need additional calculation
-		PodsCount:          0, // Would need additional calculation
+		CPUAllocated:       0, // Will be calculated in calculateAggregatedValues
+		PodsCount:          0, // Will be calculated in calculateAggregatedValues
 		Pods:               "",
 		NodeInfo:           nodeInfoMap,
 		Deleted:            false,
@@ -856,8 +871,115 @@ func (w *WorkloadCollector) convertNamespaceToNamespaceInfo(ns *api_v1.Namespace
 	return NamespaceInfo{
 		Name:         ns.Name,
 		Deleted:      false,
-		WorkloadCount: 0, // Would need additional calculation across workloads
-		PodCount:     0,  // Would need additional calculation
+		WorkloadCount: 0, // Will be calculated in calculateAggregatedValues
+		PodCount:     0,  // Will be calculated in calculateAggregatedValues
 		CreationTime: &creationTime,
 	}
+}
+
+// calculateAggregatedValues calculates aggregated metrics for nodes and namespaces
+func (w *WorkloadCollector) calculateAggregatedValues(snapshot *ClusterWorkloadSnapshot) {
+	// Create maps for aggregation
+	nodeMetrics := make(map[string]*nodeAggregation)
+	namespaceMetrics := make(map[string]*namespaceAggregation)
+	
+	// Initialize node metrics
+	for i := range snapshot.Nodes {
+		nodeMetrics[snapshot.Nodes[i].Name] = &nodeAggregation{
+			nodeIndex: i,
+		}
+	}
+	
+	// Initialize namespace metrics
+	for i := range snapshot.Namespaces {
+		namespaceMetrics[snapshot.Namespaces[i].Name] = &namespaceAggregation{
+			namespaceIndex: i,
+		}
+	}
+	
+	// Aggregate workload data
+	for _, workload := range snapshot.Workloads {
+		// Update namespace metrics
+		if nsMetric, exists := namespaceMetrics[workload.Namespace]; exists {
+			nsMetric.workloadCount++
+			nsMetric.podCount += workload.TotalPods
+		}
+		
+		// Update node metrics for pods
+		if workload.ServiceType == SERVICE_TYPE_POD && workload.NodeName != nil {
+			if nodeMetric, exists := nodeMetrics[*workload.NodeName]; exists {
+				nodeMetric.podCount++
+				
+				// Calculate resource allocation from pod
+				if workload.ServiceConfig != nil {
+					for _, container := range workload.ServiceConfig.Containers {
+						nodeMetric.cpuAllocated += w.parseResourceValue(container.Resources.Requests["cpu"])
+						nodeMetric.memoryAllocated += w.parseMemoryValue(container.Resources.Requests["memory"])
+					}
+				}
+			}
+		}
+	}
+	
+	// Aggregate job data
+	for _, job := range snapshot.Jobs {
+		// Update namespace metrics
+		if nsMetric, exists := namespaceMetrics[job.Namespace]; exists {
+			nsMetric.workloadCount++ // Jobs count as workloads
+		}
+	}
+	
+	// Apply calculated values to nodes
+	for _, metrics := range nodeMetrics {
+		if metrics.nodeIndex < len(snapshot.Nodes) {
+			snapshot.Nodes[metrics.nodeIndex].PodsCount = metrics.podCount
+			snapshot.Nodes[metrics.nodeIndex].CPUAllocated = metrics.cpuAllocated
+			snapshot.Nodes[metrics.nodeIndex].MemoryAllocated = metrics.memoryAllocated
+		}
+	}
+	
+	// Apply calculated values to namespaces
+	for _, metrics := range namespaceMetrics {
+		if metrics.namespaceIndex < len(snapshot.Namespaces) {
+			snapshot.Namespaces[metrics.namespaceIndex].WorkloadCount = metrics.workloadCount
+			snapshot.Namespaces[metrics.namespaceIndex].PodCount = metrics.podCount
+		}
+	}
+}
+
+// nodeAggregation holds aggregation data for a node
+type nodeAggregation struct {
+	nodeIndex       int
+	podCount        int
+	cpuAllocated    float64
+	memoryAllocated int
+}
+
+// namespaceAggregation holds aggregation data for a namespace
+type namespaceAggregation struct {
+	namespaceIndex int
+	workloadCount  int
+	podCount       int
+}
+
+// parseResourceValue parses CPU resource value to float64
+func (w *WorkloadCollector) parseResourceValue(value string) float64 {
+	if value == "" {
+		return 0
+	}
+	if quantity, err := resource.ParseQuantity(value); err == nil {
+		return quantity.AsApproximateFloat64()
+	}
+	return 0
+}
+
+// parseMemoryValue parses memory resource value to MB
+func (w *WorkloadCollector) parseMemoryValue(value string) int {
+	if value == "" {
+		return 0
+	}
+	if quantity, err := resource.ParseQuantity(value); err == nil {
+		return int(quantity.Value() / (1024 * 1024)) // Convert to MB
+	}
+	return 0
 }
