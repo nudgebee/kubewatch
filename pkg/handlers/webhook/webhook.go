@@ -267,4 +267,3 @@ func prepareWebhookMessage(e event.Event, m *Webhook) *WebhookMessage {
 		Time: time.Now(),
 	}
 }
-

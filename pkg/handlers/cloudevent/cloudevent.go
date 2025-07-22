@@ -18,8 +18,9 @@ package cloudevent
 
 import (
 	"fmt"
-	"github.com/sirupsen/logrus"
 	"os"
+
+	"github.com/sirupsen/logrus"
 
 	"bytes"
 	"encoding/json"
@@ -27,6 +28,7 @@ import (
 	"time"
 
 	"github.com/bitnami-labs/kubewatch/config"
+	"github.com/bitnami-labs/kubewatch/pkg/collector"
 	"github.com/bitnami-labs/kubewatch/pkg/event"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -43,12 +45,13 @@ Command line flags will override environment variables
 
 `
 
-// Webhook handler implements handler.Handler interface,
-// Notify event to Webhook channel
+// CloudEvent handler implements handler.Handler interface,
+// Notify event to CloudEvent endpoint
 type CloudEvent struct {
-	Url       string
-	StartTime uint64
-	Counter   uint64
+	Url        string
+	StartTime  uint64
+	Counter    uint64
+	httpClient *http.Client
 }
 
 type CloudEventMessage struct {
@@ -73,6 +76,26 @@ type CloudEventMessageData struct {
 	OldObj      runtime.Object `json:"oldObj"`
 }
 
+// SyncWebhookMessage reused from webhook package for consistency
+type SyncWebhookMessage struct {
+	Type            string                            `json:"type"`
+	Timestamp       time.Time                         `json:"timestamp"`
+	ClusterSnapshot collector.ClusterWorkloadSnapshot `json:"clusterSnapshot"`
+	Metadata        collector.WorkloadSyncMetadata    `json:"metadata"`
+}
+
+// CloudEventSnapshotMessage wraps SyncWebhookMessage in CloudEvent format
+type CloudEventSnapshotMessage struct {
+	SpecVersion     string             `json:"specversion"`
+	Type            string             `json:"type"`
+	Source          string             `json:"source"`
+	Subject         string             `json:"subject"`
+	ID              string             `json:"id"`
+	Time            time.Time          `json:"time"`
+	DataContentType string             `json:"datacontenttype"`
+	Data            SyncWebhookMessage `json:"data"`
+}
+
 func (m *CloudEvent) Init(c *config.Config) error {
 	m.Url = c.Handler.CloudEvent.Url
 	m.StartTime = uint64(time.Now().Unix())
@@ -84,6 +107,17 @@ func (m *CloudEvent) Init(c *config.Config) error {
 
 	if m.Url == "" {
 		return fmt.Errorf(cloudEventErrMsg, "Missing cloudevent url")
+	}
+
+	// Create dedicated HTTP client for this handler
+	// Use sync timeout if available, otherwise default to 30s
+	timeout := 30 * time.Second
+	if c.Sync.TimeoutSeconds > 0 {
+		timeout = time.Duration(c.Sync.TimeoutSeconds) * time.Second
+	}
+
+	m.httpClient = &http.Client{
+		Timeout: timeout,
 	}
 
 	return nil
@@ -147,12 +181,55 @@ func (m *CloudEvent) postMessage(webhookMessage *CloudEventMessage) error {
 	}
 	req.Header.Add("Content-Type", "application/json")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := m.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
+	return nil
+}
+
+// HandleWorkloadSnapshot handles workload snapshot data as CloudEvents
+func (m *CloudEvent) HandleWorkloadSnapshot(snapshot *collector.ClusterWorkloadSnapshot, metadata collector.WorkloadSyncMetadata) error {
+	m.Counter++ // Increment counter for snapshot events too
+
+	// Send the SyncWebhookMessage directly, not wrapped in CloudEvent format
+	// This matches what the Python pydantic model expects
+	message := &SyncWebhookMessage{
+		Type:            "cluster_snapshot",
+		Timestamp:       time.Now(),
+		ClusterSnapshot: *snapshot,
+		Metadata:        metadata,
+	}
+
+	return m.postSyncMessage(message)
+}
+
+// postSyncMessage sends a sync message (same format as webhook)
+func (m *CloudEvent) postSyncMessage(message *SyncWebhookMessage) error {
+	jsonData, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("failed to marshal sync message: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", m.Url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send sync message: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("endpoint returned error status: %d", resp.StatusCode)
+	}
+
+	logrus.Printf("Workload snapshot successfully sent to %s at %s", m.Url, time.Now())
 	return nil
 }
