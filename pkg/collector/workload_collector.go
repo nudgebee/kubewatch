@@ -25,7 +25,7 @@ import (
 
 	"github.com/bitnami-labs/kubewatch/config"
 	"github.com/sirupsen/logrus"
-	
+
 	apps_v1 "k8s.io/api/apps/v1"
 	batch_v1 "k8s.io/api/batch/v1"
 	api_v1 "k8s.io/api/core/v1"
@@ -54,18 +54,18 @@ func NewWorkloadCollector(client kubernetes.Interface, config *config.SyncConfig
 func (w *WorkloadCollector) CollectWorkloadSnapshot(ctx context.Context, namespace string) (*ClusterWorkloadSnapshot, error) {
 	w.logger.Info("Starting workload snapshot collection")
 	startTime := time.Now()
-	
+
 	snapshot := &ClusterWorkloadSnapshot{
 		Workloads:  []ServiceInfo{},
 		Jobs:       []JobInfo{},
 		Namespaces: []NamespaceInfo{},
 	}
-	
+
 	// Use wait group for concurrent collection
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	errChan := make(chan error, 10)
-	
+
 	// Collect workloads (using ServiceInfo for all workload types)
 	wg.Add(5)
 	go w.collectDeployments(ctx, namespace, &snapshot.Workloads, &mu, &wg, errChan)
@@ -73,25 +73,25 @@ func (w *WorkloadCollector) CollectWorkloadSnapshot(ctx context.Context, namespa
 	go w.collectStatefulSets(ctx, namespace, &snapshot.Workloads, &mu, &wg, errChan)
 	go w.collectPods(ctx, namespace, &snapshot.Workloads, &mu, &wg, errChan)
 	go w.collectServices(ctx, namespace, &snapshot.Workloads, &mu, &wg, errChan)
-	
+
 	// Collect jobs separately
 	wg.Add(1)
 	go w.collectJobs(ctx, namespace, &snapshot.Jobs, &mu, &wg, errChan)
-	
+
 	// Collect namespaces
 	wg.Add(1)
 	go w.collectNamespaces(ctx, &snapshot.Namespaces, &mu, &wg, errChan)
-	
+
 	// Conditionally collect nodes
 	if w.config.WorkloadSnapshot.IncludeNodes {
 		wg.Add(1)
 		go w.collectNodes(ctx, &snapshot.Nodes, &mu, &wg, errChan)
 	}
-	
+
 	// Wait for all collections to complete
 	wg.Wait()
 	close(errChan)
-	
+
 	// Check for errors
 	for err := range errChan {
 		if err != nil {
@@ -99,197 +99,197 @@ func (w *WorkloadCollector) CollectWorkloadSnapshot(ctx context.Context, namespa
 			return nil, err
 		}
 	}
-	
+
 	// Calculate aggregated values for nodes and namespaces
 	w.calculateAggregatedValues(snapshot)
-	
+
 	duration := time.Since(startTime)
 	w.logger.WithField("duration", duration).Info("Workload snapshot collection completed")
-	
+
 	return snapshot, nil
 }
 
 // collectDeployments collects deployments as ServiceInfo
 func (w *WorkloadCollector) collectDeployments(ctx context.Context, namespace string, workloads *[]ServiceInfo, mu *sync.Mutex, wg *sync.WaitGroup, errChan chan error) {
 	defer wg.Done()
-	
+
 	deployments, err := w.client.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		errChan <- err
 		return
 	}
-	
+
 	for _, dep := range deployments.Items {
 		serviceInfo := w.convertDeploymentToServiceInfo(&dep)
-		
+
 		mu.Lock()
 		*workloads = append(*workloads, serviceInfo)
 		mu.Unlock()
 	}
-	
+
 	w.logger.WithField("count", len(deployments.Items)).Debug("Collected deployments")
 }
 
 // collectDaemonSets collects daemonsets as ServiceInfo
 func (w *WorkloadCollector) collectDaemonSets(ctx context.Context, namespace string, workloads *[]ServiceInfo, mu *sync.Mutex, wg *sync.WaitGroup, errChan chan error) {
 	defer wg.Done()
-	
+
 	daemonSets, err := w.client.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		errChan <- err
 		return
 	}
-	
+
 	for _, ds := range daemonSets.Items {
 		serviceInfo := w.convertDaemonSetToServiceInfo(&ds)
-		
+
 		mu.Lock()
 		*workloads = append(*workloads, serviceInfo)
 		mu.Unlock()
 	}
-	
+
 	w.logger.WithField("count", len(daemonSets.Items)).Debug("Collected daemonsets")
 }
 
 // collectStatefulSets collects statefulsets as ServiceInfo
 func (w *WorkloadCollector) collectStatefulSets(ctx context.Context, namespace string, workloads *[]ServiceInfo, mu *sync.Mutex, wg *sync.WaitGroup, errChan chan error) {
 	defer wg.Done()
-	
+
 	statefulSets, err := w.client.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		errChan <- err
 		return
 	}
-	
+
 	for _, ss := range statefulSets.Items {
 		serviceInfo := w.convertStatefulSetToServiceInfo(&ss)
-		
+
 		mu.Lock()
 		*workloads = append(*workloads, serviceInfo)
 		mu.Unlock()
 	}
-	
+
 	w.logger.WithField("count", len(statefulSets.Items)).Debug("Collected statefulsets")
 }
 
 // collectPods collects pods as ServiceInfo
 func (w *WorkloadCollector) collectPods(ctx context.Context, namespace string, workloads *[]ServiceInfo, mu *sync.Mutex, wg *sync.WaitGroup, errChan chan error) {
 	defer wg.Done()
-	
+
 	pods, err := w.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		errChan <- err
 		return
 	}
-	
+
 	for _, pod := range pods.Items {
 		serviceInfo := w.convertPodToServiceInfo(&pod)
-		
+
 		mu.Lock()
 		*workloads = append(*workloads, serviceInfo)
 		mu.Unlock()
 	}
-	
+
 	w.logger.WithField("count", len(pods.Items)).Debug("Collected pods")
 }
 
 // collectServices collects services as ServiceInfo
 func (w *WorkloadCollector) collectServices(ctx context.Context, namespace string, workloads *[]ServiceInfo, mu *sync.Mutex, wg *sync.WaitGroup, errChan chan error) {
 	defer wg.Done()
-	
+
 	services, err := w.client.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		errChan <- err
 		return
 	}
-	
+
 	for _, svc := range services.Items {
 		serviceInfo := w.convertServiceToServiceInfo(&svc)
-		
+
 		mu.Lock()
 		*workloads = append(*workloads, serviceInfo)
 		mu.Unlock()
 	}
-	
+
 	w.logger.WithField("count", len(services.Items)).Debug("Collected services")
 }
 
 // collectJobs collects jobs as JobInfo
 func (w *WorkloadCollector) collectJobs(ctx context.Context, namespace string, jobs *[]JobInfo, mu *sync.Mutex, wg *sync.WaitGroup, errChan chan error) {
 	defer wg.Done()
-	
+
 	jobList, err := w.client.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		errChan <- err
 		return
 	}
-	
+
 	for _, job := range jobList.Items {
 		jobInfo := w.convertJobToJobInfo(&job)
-		
+
 		mu.Lock()
 		*jobs = append(*jobs, jobInfo)
 		mu.Unlock()
 	}
-	
+
 	w.logger.WithField("count", len(jobList.Items)).Debug("Collected jobs")
 }
 
 // collectNodes collects nodes as NodeInfo
 func (w *WorkloadCollector) collectNodes(ctx context.Context, nodes *[]NodeInfo, mu *sync.Mutex, wg *sync.WaitGroup, errChan chan error) {
 	defer wg.Done()
-	
+
 	nodeList, err := w.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		errChan <- err
 		return
 	}
-	
+
 	for _, node := range nodeList.Items {
 		nodeInfo := w.convertNodeToNodeInfo(&node)
-		
+
 		mu.Lock()
 		*nodes = append(*nodes, nodeInfo)
 		mu.Unlock()
 	}
-	
+
 	w.logger.WithField("count", len(nodeList.Items)).Debug("Collected nodes")
 }
 
 // collectNamespaces collects namespaces as NamespaceInfo
 func (w *WorkloadCollector) collectNamespaces(ctx context.Context, namespaces *[]NamespaceInfo, mu *sync.Mutex, wg *sync.WaitGroup, errChan chan error) {
 	defer wg.Done()
-	
+
 	namespaceList, err := w.client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		errChan <- err
 		return
 	}
-	
+
 	for _, ns := range namespaceList.Items {
 		namespaceInfo := w.convertNamespaceToNamespaceInfo(&ns)
-		
+
 		mu.Lock()
 		*namespaces = append(*namespaces, namespaceInfo)
 		mu.Unlock()
 	}
-	
+
 	w.logger.WithField("count", len(namespaceList.Items)).Debug("Collected namespaces")
 }
 
 // convertDeploymentToServiceInfo converts a deployment to ServiceInfo
 func (w *WorkloadCollector) convertDeploymentToServiceInfo(dep *apps_v1.Deployment) ServiceInfo {
 	resourceVersion := w.parseResourceVersion(dep.ResourceVersion)
-	
+
 	// Create service config with default values
 	serviceConfig := &ServiceConfig{
 		Labels:      w.ensureLabels(dep.Labels),
 		Containers:  w.extractContainers(dep.Spec.Template.Spec.Containers),
 		Volumes:     w.extractVolumes(dep.Spec.Template.Spec.Volumes),
-		Owner:       w.extractOwners(dep.OwnerReferences),
+		Owner:       w.extractOwners(dep.OwnerReferences, dep.Namespace),
 		Annotations: w.convertAnnotations(dep.Annotations),
 	}
-	
+
 	status := "Unknown"
 	if dep.Status.ReadyReplicas == *dep.Spec.Replicas {
 		status = "Ready"
@@ -298,38 +298,38 @@ func (w *WorkloadCollector) convertDeploymentToServiceInfo(dep *apps_v1.Deployme
 	} else {
 		status = "NotReady"
 	}
-	
+
 	isHelmRelease := w.isHelmRelease(dep.Labels)
 	creationTime := dep.CreationTimestamp.Time.Format(time.RFC3339)
-	
+
 	return ServiceInfo{
 		ResourceVersion: resourceVersion,
-		Name:           dep.Name,
-		ServiceType:    SERVICE_TYPE_DEPLOYMENT,
-		Namespace:      dep.Namespace,
-		Classification: "deployment",
-		Deleted:        false,
-		ServiceConfig:  serviceConfig,
-		ReadyPods:      int(dep.Status.ReadyReplicas),
-		TotalPods:      int(*dep.Spec.Replicas),
-		IsHelmRelease:  isHelmRelease,
-		Status:         &status,
-		CreationTime:   &creationTime,
+		Name:            dep.Name,
+		ServiceType:     SERVICE_TYPE_DEPLOYMENT,
+		Namespace:       dep.Namespace,
+		Classification:  "deployment",
+		Deleted:         false,
+		ServiceConfig:   serviceConfig,
+		ReadyPods:       int(dep.Status.ReadyReplicas),
+		TotalPods:       int(*dep.Spec.Replicas),
+		IsHelmRelease:   isHelmRelease,
+		Status:          &status,
+		CreationTime:    &creationTime,
 	}
 }
 
 // convertDaemonSetToServiceInfo converts a daemonset to ServiceInfo
 func (w *WorkloadCollector) convertDaemonSetToServiceInfo(ds *apps_v1.DaemonSet) ServiceInfo {
 	resourceVersion := w.parseResourceVersion(ds.ResourceVersion)
-	
+
 	serviceConfig := &ServiceConfig{
 		Labels:      w.ensureLabels(ds.Labels),
 		Containers:  w.extractContainers(ds.Spec.Template.Spec.Containers),
 		Volumes:     w.extractVolumes(ds.Spec.Template.Spec.Volumes),
-		Owner:       w.extractOwners(ds.OwnerReferences),
+		Owner:       w.extractOwners(ds.OwnerReferences, ds.Namespace),
 		Annotations: w.convertAnnotations(ds.Annotations),
 	}
-	
+
 	status := "Unknown"
 	if ds.Status.NumberReady == ds.Status.DesiredNumberScheduled {
 		status = "Ready"
@@ -338,38 +338,38 @@ func (w *WorkloadCollector) convertDaemonSetToServiceInfo(ds *apps_v1.DaemonSet)
 	} else {
 		status = "NotReady"
 	}
-	
+
 	isHelmRelease := w.isHelmRelease(ds.Labels)
 	creationTime := ds.CreationTimestamp.Time.Format(time.RFC3339)
-	
+
 	return ServiceInfo{
 		ResourceVersion: resourceVersion,
-		Name:           ds.Name,
-		ServiceType:    SERVICE_TYPE_DAEMONSET,
-		Namespace:      ds.Namespace,
-		Classification: "daemonset",
-		Deleted:        false,
-		ServiceConfig:  serviceConfig,
-		ReadyPods:      int(ds.Status.NumberReady),
-		TotalPods:      int(ds.Status.DesiredNumberScheduled),
-		IsHelmRelease:  isHelmRelease,
-		Status:         &status,
-		CreationTime:   &creationTime,
+		Name:            ds.Name,
+		ServiceType:     SERVICE_TYPE_DAEMONSET,
+		Namespace:       ds.Namespace,
+		Classification:  "daemonset",
+		Deleted:         false,
+		ServiceConfig:   serviceConfig,
+		ReadyPods:       int(ds.Status.NumberReady),
+		TotalPods:       int(ds.Status.DesiredNumberScheduled),
+		IsHelmRelease:   isHelmRelease,
+		Status:          &status,
+		CreationTime:    &creationTime,
 	}
 }
 
 // convertStatefulSetToServiceInfo converts a statefulset to ServiceInfo
 func (w *WorkloadCollector) convertStatefulSetToServiceInfo(ss *apps_v1.StatefulSet) ServiceInfo {
 	resourceVersion := w.parseResourceVersion(ss.ResourceVersion)
-	
+
 	serviceConfig := &ServiceConfig{
 		Labels:      w.ensureLabels(ss.Labels),
 		Containers:  w.extractContainers(ss.Spec.Template.Spec.Containers),
 		Volumes:     w.extractVolumes(ss.Spec.Template.Spec.Volumes),
-		Owner:       w.extractOwners(ss.OwnerReferences),
+		Owner:       w.extractOwners(ss.OwnerReferences, ss.Namespace),
 		Annotations: w.convertAnnotations(ss.Annotations),
 	}
-	
+
 	status := "Unknown"
 	if ss.Status.ReadyReplicas == *ss.Spec.Replicas {
 		status = "Ready"
@@ -378,116 +378,116 @@ func (w *WorkloadCollector) convertStatefulSetToServiceInfo(ss *apps_v1.Stateful
 	} else {
 		status = "NotReady"
 	}
-	
+
 	isHelmRelease := w.isHelmRelease(ss.Labels)
 	creationTime := ss.CreationTimestamp.Time.Format(time.RFC3339)
-	
+
 	return ServiceInfo{
 		ResourceVersion: resourceVersion,
-		Name:           ss.Name,
-		ServiceType:    SERVICE_TYPE_STATEFULSET,
-		Namespace:      ss.Namespace,
-		Classification: "statefulset",
-		Deleted:        false,
-		ServiceConfig:  serviceConfig,
-		ReadyPods:      int(ss.Status.ReadyReplicas),
-		TotalPods:      int(*ss.Spec.Replicas),
-		IsHelmRelease:  isHelmRelease,
-		Status:         &status,
-		CreationTime:   &creationTime,
+		Name:            ss.Name,
+		ServiceType:     SERVICE_TYPE_STATEFULSET,
+		Namespace:       ss.Namespace,
+		Classification:  "statefulset",
+		Deleted:         false,
+		ServiceConfig:   serviceConfig,
+		ReadyPods:       int(ss.Status.ReadyReplicas),
+		TotalPods:       int(*ss.Spec.Replicas),
+		IsHelmRelease:   isHelmRelease,
+		Status:          &status,
+		CreationTime:    &creationTime,
 	}
 }
 
 // convertPodToServiceInfo converts a pod to ServiceInfo
 func (w *WorkloadCollector) convertPodToServiceInfo(pod *api_v1.Pod) ServiceInfo {
 	resourceVersion := w.parseResourceVersion(pod.ResourceVersion)
-	
+
 	// Convert QOSClass to string safely
 	var qosClass *string
 	if pod.Status.QOSClass != "" {
 		qosStr := string(pod.Status.QOSClass)
 		qosClass = &qosStr
 	}
-	
+
 	serviceConfig := &ServiceConfig{
 		Labels:         w.ensureLabels(pod.Labels),
 		Containers:     w.extractContainers(pod.Spec.Containers),
 		Volumes:        w.extractVolumes(pod.Spec.Volumes),
-		Owner:          w.extractOwners(pod.OwnerReferences),
+		Owner:          w.extractOwners(pod.OwnerReferences, pod.Namespace),
 		Annotations:    w.convertAnnotations(pod.Annotations),
 		IP:             &pod.Status.PodIP,
 		QosClass:       qosClass,
 		ServiceAccount: &pod.Spec.ServiceAccountName,
 	}
-	
+
 	status := string(pod.Status.Phase)
 	isHelmRelease := w.isHelmRelease(pod.Labels)
 	creationTime := pod.CreationTimestamp.Time.Format(time.RFC3339)
-	
+
 	// Calculate restart count
 	restartCount := make(map[string]int)
 	for _, containerStatus := range pod.Status.ContainerStatuses {
 		restartCount[containerStatus.Name] = int(containerStatus.RestartCount)
 	}
-	
+
 	return ServiceInfo{
 		ResourceVersion: resourceVersion,
-		Name:           pod.Name,
-		ServiceType:    SERVICE_TYPE_POD,
-		Namespace:      pod.Namespace,
-		Classification: "pod",
-		Deleted:        false,
-		ServiceConfig:  serviceConfig,
-		ReadyPods:      w.isPodReady(pod),
-		TotalPods:      1,
-		IsHelmRelease:  isHelmRelease,
-		Status:         &status,
-		NodeName:       &pod.Spec.NodeName,
-		RestartCount:   restartCount,
-		CreationTime:   &creationTime,
+		Name:            pod.Name,
+		ServiceType:     SERVICE_TYPE_POD,
+		Namespace:       pod.Namespace,
+		Classification:  "pod",
+		Deleted:         false,
+		ServiceConfig:   serviceConfig,
+		ReadyPods:       w.isPodReady(pod),
+		TotalPods:       1,
+		IsHelmRelease:   isHelmRelease,
+		Status:          &status,
+		NodeName:        &pod.Spec.NodeName,
+		RestartCount:    restartCount,
+		CreationTime:    &creationTime,
 	}
 }
 
 // convertServiceToServiceInfo converts a service to ServiceInfo
 func (w *WorkloadCollector) convertServiceToServiceInfo(svc *api_v1.Service) ServiceInfo {
 	resourceVersion := w.parseResourceVersion(svc.ResourceVersion)
-	
+
 	serviceConfig := &ServiceConfig{
 		Labels:      w.ensureLabels(svc.Labels),
 		Containers:  w.extractContainers(nil), // Services don't have containers
 		Volumes:     w.extractVolumes(nil),    // Services don't have volumes
-		Owner:       w.extractOwners(svc.OwnerReferences),
+		Owner:       w.extractOwners(svc.OwnerReferences, svc.Namespace),
 		Annotations: w.convertAnnotations(svc.Annotations),
 	}
-	
+
 	status := "Active"
 	isHelmRelease := w.isHelmRelease(svc.Labels)
 	creationTime := svc.CreationTimestamp.Time.Format(time.RFC3339)
-	
+
 	return ServiceInfo{
 		ResourceVersion: resourceVersion,
-		Name:           svc.Name,
-		ServiceType:    SERVICE_TYPE_SERVICE,
-		Namespace:      svc.Namespace,
-		Classification: "service",
-		Deleted:        false,
-		ServiceConfig:  serviceConfig,
-		ReadyPods:      0, // Services don't have direct pod counts
-		TotalPods:      0,
-		IsHelmRelease:  isHelmRelease,
-		Status:         &status,
-		CreationTime:   &creationTime,
+		Name:            svc.Name,
+		ServiceType:     SERVICE_TYPE_SERVICE,
+		Namespace:       svc.Namespace,
+		Classification:  "service",
+		Deleted:         false,
+		ServiceConfig:   serviceConfig,
+		ReadyPods:       0, // Services don't have direct pod counts
+		TotalPods:       0,
+		IsHelmRelease:   isHelmRelease,
+		Status:          &status,
+		CreationTime:    &creationTime,
 	}
 }
 
 // convertJobToJobInfo converts a job to JobInfo
 func (w *WorkloadCollector) convertJobToJobInfo(job *batch_v1.Job) JobInfo {
 	creationTime := job.CreationTimestamp.Time.Format(time.RFC3339)
-	
+
 	// Calculate resource requirements
 	cpuReq := 0.0
 	memReq := 0
-	
+
 	for _, container := range job.Spec.Template.Spec.Containers {
 		if container.Resources.Requests != nil {
 			if cpu := container.Resources.Requests.Cpu(); cpu != nil {
@@ -498,15 +498,15 @@ func (w *WorkloadCollector) convertJobToJobInfo(job *batch_v1.Job) JobInfo {
 			}
 		}
 	}
-	
+
 	completions := 1
 	if job.Spec.Completions != nil {
 		completions = int(*job.Spec.Completions)
 	}
-	
+
 	// Create job containers
 	jobContainers := w.extractJobContainers(job.Spec.Template.Spec.Containers)
-	
+
 	// Create job data
 	jobData := JobData{
 		Containers: jobContainers,
@@ -518,7 +518,7 @@ func (w *WorkloadCollector) convertJobToJobInfo(job *batch_v1.Job) JobInfo {
 	if job.Status.CompletionTime != nil {
 		completionTime := job.Status.CompletionTime.Time.Format(time.RFC3339)
 		jobData.CompletionTime = &completionTime
-		
+
 		// Calculate duration if both start and completion times are available
 		if job.Status.StartTime != nil {
 			duration := job.Status.CompletionTime.Sub(job.Status.StartTime.Time)
@@ -534,27 +534,27 @@ func (w *WorkloadCollector) convertJobToJobInfo(job *batch_v1.Job) JobInfo {
 		backoffLimit := int(*job.Spec.BackoffLimit)
 		jobData.BackoffLimit = &backoffLimit
 	}
-	
+
 	// Create job conditions
 	jobConditions := w.extractJobConditions(job.Status.Conditions)
-	
+
 	// Create job status with proper pointer values
 	active := int(job.Status.Active)
 	succeeded := int(job.Status.Succeeded)
 	failed := int(job.Status.Failed)
-	
+
 	jobStatus := JobStatus{
 		Active:     &active,
 		Succeeded:  &succeeded,
 		Failed:     &failed,
 		Conditions: jobConditions,
 	}
-	
+
 	if job.Status.CompletionTime != nil {
 		completionTime := job.Status.CompletionTime.Time.Format(time.RFC3339)
 		jobStatus.CompletionTime = &completionTime
 	}
-	
+
 	// Handle failed time from conditions
 	for _, condition := range job.Status.Conditions {
 		if condition.Type == batch_v1.JobFailed && condition.Status == "True" {
@@ -563,7 +563,7 @@ func (w *WorkloadCollector) convertJobToJobInfo(job *batch_v1.Job) JobInfo {
 			break
 		}
 	}
-	
+
 	return JobInfo{
 		Name:        job.Name,
 		Namespace:   job.Namespace,
@@ -581,7 +581,7 @@ func (w *WorkloadCollector) convertJobToJobInfo(job *batch_v1.Job) JobInfo {
 // convertNodeToNodeInfo converts a node to NodeInfo
 func (w *WorkloadCollector) convertNodeToNodeInfo(node *api_v1.Node) NodeInfo {
 	creationTime := node.CreationTimestamp.Time.Format(time.RFC3339)
-	
+
 	// Extract IPs
 	internalIP := ""
 	externalIP := ""
@@ -592,22 +592,25 @@ func (w *WorkloadCollector) convertNodeToNodeInfo(node *api_v1.Node) NodeInfo {
 			externalIP = addr.Address
 		}
 	}
-	
+
 	// Extract capacity and allocatable
 	memoryCapacity := w.parseMemoryToMB(node.Status.Capacity.Memory())
 	memoryAllocatable := w.parseMemoryToMB(node.Status.Allocatable.Memory())
 	cpuCapacity := node.Status.Capacity.Cpu().AsApproximateFloat64()
 	cpuAllocatable := node.Status.Allocatable.Cpu().AsApproximateFloat64()
-	
-	// Build conditions string
+
+	// Build active conditions string (matching Python __to_active_conditions_str)
 	conditions := ""
 	for _, condition := range node.Status.Conditions {
-		if conditions != "" {
-			conditions += ","
+		// Include non-False conditions or Ready condition
+		if condition.Status != "False" || condition.Type == "Ready" {
+			if conditions != "" {
+				conditions += ","
+			}
+			conditions += fmt.Sprintf("%s:%s", condition.Type, condition.Status)
 		}
-		conditions += fmt.Sprintf("%s=%s", condition.Type, condition.Status)
 	}
-	
+
 	// Build taints string
 	taints := ""
 	for _, taint := range node.Spec.Taints {
@@ -616,45 +619,70 @@ func (w *WorkloadCollector) convertNodeToNodeInfo(node *api_v1.Node) NodeInfo {
 		}
 		taints += fmt.Sprintf("%s=%s:%s", taint.Key, taint.Value, taint.Effect)
 	}
-	
-	// Convert node info to map with direct field access
-	nodeInfoMap := map[string]interface{}{
-		"machineID":                node.Status.NodeInfo.MachineID,
-		"systemUUID":               node.Status.NodeInfo.SystemUUID,
-		"bootID":                   node.Status.NodeInfo.BootID,
-		"kernelVersion":            node.Status.NodeInfo.KernelVersion,
-		"osImage":                  node.Status.NodeInfo.OSImage,
-		"containerRuntimeVersion":  node.Status.NodeInfo.ContainerRuntimeVersion,
-		"kubeletVersion":           node.Status.NodeInfo.KubeletVersion,
-		"operatingSystem":          node.Status.NodeInfo.OperatingSystem,
-		"architecture":             node.Status.NodeInfo.Architecture,
+
+	// Build node info structure matching Python __to_node_info format
+	systemInfo := map[string]interface{}{
+		"machineID":               node.Status.NodeInfo.MachineID,
+		"systemUUID":              node.Status.NodeInfo.SystemUUID,
+		"bootID":                  node.Status.NodeInfo.BootID,
+		"kernelVersion":           node.Status.NodeInfo.KernelVersion,
+		"osImage":                 node.Status.NodeInfo.OSImage,
+		"containerRuntimeVersion": node.Status.NodeInfo.ContainerRuntimeVersion,
+		"kubeletVersion":          node.Status.NodeInfo.KubeletVersion,
+		"operatingSystem":         node.Status.NodeInfo.OperatingSystem,
+		"architecture":            node.Status.NodeInfo.Architecture,
 	}
-	
 	// Add KubeProxyVersion if available (deprecated but may still be present)
 	if node.Status.NodeInfo.KubeProxyVersion != "" {
-		nodeInfoMap["kubeProxyVersion"] = node.Status.NodeInfo.KubeProxyVersion
+		systemInfo["kubeProxyVersion"] = node.Status.NodeInfo.KubeProxyVersion
 	}
-	
+
+	// Build addresses list
+	addresses := make([]string, 0)
+	for _, addr := range node.Status.Addresses {
+		addresses = append(addresses, addr.Address)
+	}
+
+	// Build labels map
+	labels := make(map[string]string)
+	if node.Labels != nil {
+		labels = node.Labels
+	}
+
+	// Build annotations map
+	annotations := make(map[string]string)
+	if node.Annotations != nil {
+		annotations = node.Annotations
+	}
+
+	// Create node info structure matching Python format
+	nodeInfoMap := map[string]interface{}{
+		"system":      systemInfo,
+		"labels":      labels,
+		"annotations": annotations,
+		"addresses":   addresses,
+	}
+
 	return NodeInfo{
-		Name:               node.Name,
-		NodeCreationTime:   creationTime,
-		InternalIP:         internalIP,
-		ExternalIP:         externalIP,
-		Taints:             taints,
-		Conditions:         conditions,
-		MemoryCapacity:     memoryCapacity,
-		MemoryAllocatable:  memoryAllocatable,
-		MemoryAllocated:    0, // Will be calculated in calculateAggregatedValues
-		CPUCapacity:        cpuCapacity,
-		CPUAllocatable:     cpuAllocatable,
-		CPUAllocated:       0, // Will be calculated in calculateAggregatedValues
-		PodsCount:          0, // Will be calculated in calculateAggregatedValues
-		Pods:               "",
-		NodeInfo:           nodeInfoMap,
-		Deleted:            false,
-		ResourceVersion:    w.parseResourceVersion(node.ResourceVersion),
-		CPULimits:          0,
-		MemoryLimits:       0,
+		Name:              node.Name,
+		NodeCreationTime:  creationTime,
+		InternalIP:        internalIP,
+		ExternalIP:        externalIP,
+		Taints:            taints,
+		Conditions:        conditions,
+		MemoryCapacity:    memoryCapacity,
+		MemoryAllocatable: memoryAllocatable,
+		MemoryAllocated:   0, // Will be calculated in calculateAggregatedValues
+		CPUCapacity:       cpuCapacity,
+		CPUAllocatable:    cpuAllocatable,
+		CPUAllocated:      0, // Will be calculated in calculateAggregatedValues
+		PodsCount:         0, // Will be calculated in calculateAggregatedValues
+		Pods:              "",
+		NodeInfo:          nodeInfoMap,
+		Deleted:           false,
+		ResourceVersion:   w.parseResourceVersion(node.ResourceVersion),
+		CPULimits:         0,
+		MemoryLimits:      0,
 	}
 }
 
@@ -758,18 +786,59 @@ func (w *WorkloadCollector) extractVolumes(volumes []api_v1.Volume) []VolumeInfo
 	return result
 }
 
-func (w *WorkloadCollector) extractOwners(owners []metav1.OwnerReference) []OwnerInfo {
+func (w *WorkloadCollector) extractOwners(owners []metav1.OwnerReference, namespace string) []OwnerInfo {
 	if owners == nil {
 		return []OwnerInfo{}
 	}
-	result := make([]OwnerInfo, len(owners))
-	for i, owner := range owners {
-		result[i] = OwnerInfo{
-			Kind: owner.Kind,
-			Name: owner.Name,
+	result := make([]OwnerInfo, 0, len(owners))
+	for _, owner := range owners {
+		// If owner is a ReplicaSet, try to get its Deployment instead
+		if owner.Kind == "ReplicaSet" {
+			if deployment := w.getDeploymentFromReplicaSet(owner.Name, namespace); deployment != nil {
+				result = append(result, OwnerInfo{
+					Kind: "Deployment",
+					Name: deployment.Name,
+				})
+			} else {
+				// Fallback to ReplicaSet if Deployment not found
+				result = append(result, OwnerInfo{
+					Kind: owner.Kind,
+					Name: owner.Name,
+				})
+			}
+		} else {
+			result = append(result, OwnerInfo{
+				Kind: owner.Kind,
+				Name: owner.Name,
+			})
 		}
 	}
 	return result
+}
+
+// getDeploymentFromReplicaSet fetches the deployment that owns a given replicaset
+func (w *WorkloadCollector) getDeploymentFromReplicaSet(replicaSetName, namespace string) *apps_v1.Deployment {
+	// Get the ReplicaSet first
+	ctx := context.Background()
+	replicaSet, err := w.client.AppsV1().ReplicaSets(namespace).Get(ctx, replicaSetName, metav1.GetOptions{})
+	if err != nil {
+		w.logger.WithError(err).WithField("replicaset", replicaSetName).Debug("Failed to get ReplicaSet")
+		return nil
+	}
+
+	// Check if the ReplicaSet has a Deployment owner
+	for _, owner := range replicaSet.OwnerReferences {
+		if owner.Kind == "Deployment" {
+			deployment, err := w.client.AppsV1().Deployments(replicaSet.Namespace).Get(ctx, owner.Name, metav1.GetOptions{})
+			if err != nil {
+				w.logger.WithError(err).WithField("deployment", owner.Name).Debug("Failed to get Deployment")
+				return nil
+			}
+			return deployment
+		}
+	}
+
+	return nil
 }
 
 func (w *WorkloadCollector) convertAnnotations(annotations map[string]string) map[string]interface{} {
@@ -812,7 +881,7 @@ func (w *WorkloadCollector) extractJobContainers(containers []api_v1.Container) 
 		cpuLimit := 0.0
 		memReq := 0
 		memLimit := 0
-		
+
 		if container.Resources.Requests != nil {
 			if cpu := container.Resources.Requests.Cpu(); cpu != nil {
 				cpuReq = cpu.AsApproximateFloat64()
@@ -821,7 +890,7 @@ func (w *WorkloadCollector) extractJobContainers(containers []api_v1.Container) 
 				memReq = int(memory.Value() / (1024 * 1024)) // Convert to MB
 			}
 		}
-		
+
 		if container.Resources.Limits != nil {
 			if cpu := container.Resources.Limits.Cpu(); cpu != nil {
 				cpuLimit = cpu.AsApproximateFloat64()
@@ -830,7 +899,7 @@ func (w *WorkloadCollector) extractJobContainers(containers []api_v1.Container) 
 				memLimit = int(memory.Value() / (1024 * 1024)) // Convert to MB
 			}
 		}
-		
+
 		result[i] = JobContainer{
 			Name:  container.Name,
 			Image: container.Image,
@@ -867,13 +936,13 @@ func (w *WorkloadCollector) extractJobConditions(conditions []batch_v1.JobCondit
 // convertNamespaceToNamespaceInfo converts a namespace to NamespaceInfo
 func (w *WorkloadCollector) convertNamespaceToNamespaceInfo(ns *api_v1.Namespace) NamespaceInfo {
 	creationTime := ns.CreationTimestamp.Time.Format(time.RFC3339)
-	
+
 	return NamespaceInfo{
-		Name:         ns.Name,
-		Deleted:      false,
+		Name:          ns.Name,
+		Deleted:       false,
 		WorkloadCount: 0, // Will be calculated in calculateAggregatedValues
-		PodCount:     0,  // Will be calculated in calculateAggregatedValues
-		CreationTime: &creationTime,
+		PodCount:      0, // Will be calculated in calculateAggregatedValues
+		CreationTime:  &creationTime,
 	}
 }
 
@@ -882,21 +951,21 @@ func (w *WorkloadCollector) calculateAggregatedValues(snapshot *ClusterWorkloadS
 	// Create maps for aggregation
 	nodeMetrics := make(map[string]*nodeAggregation)
 	namespaceMetrics := make(map[string]*namespaceAggregation)
-	
+
 	// Initialize node metrics
 	for i := range snapshot.Nodes {
 		nodeMetrics[snapshot.Nodes[i].Name] = &nodeAggregation{
 			nodeIndex: i,
 		}
 	}
-	
+
 	// Initialize namespace metrics
 	for i := range snapshot.Namespaces {
 		namespaceMetrics[snapshot.Namespaces[i].Name] = &namespaceAggregation{
 			namespaceIndex: i,
 		}
 	}
-	
+
 	// Aggregate workload data
 	for _, workload := range snapshot.Workloads {
 		// Update namespace metrics
@@ -904,12 +973,12 @@ func (w *WorkloadCollector) calculateAggregatedValues(snapshot *ClusterWorkloadS
 			nsMetric.workloadCount++
 			nsMetric.podCount += workload.TotalPods
 		}
-		
+
 		// Update node metrics for pods
 		if workload.ServiceType == SERVICE_TYPE_POD && workload.NodeName != nil {
 			if nodeMetric, exists := nodeMetrics[*workload.NodeName]; exists {
 				nodeMetric.podCount++
-				
+
 				// Calculate resource allocation from pod
 				if workload.ServiceConfig != nil {
 					for _, container := range workload.ServiceConfig.Containers {
@@ -920,7 +989,7 @@ func (w *WorkloadCollector) calculateAggregatedValues(snapshot *ClusterWorkloadS
 			}
 		}
 	}
-	
+
 	// Aggregate job data
 	for _, job := range snapshot.Jobs {
 		// Update namespace metrics
@@ -928,7 +997,7 @@ func (w *WorkloadCollector) calculateAggregatedValues(snapshot *ClusterWorkloadS
 			nsMetric.workloadCount++ // Jobs count as workloads
 		}
 	}
-	
+
 	// Apply calculated values to nodes
 	for _, metrics := range nodeMetrics {
 		if metrics.nodeIndex < len(snapshot.Nodes) {
@@ -937,7 +1006,7 @@ func (w *WorkloadCollector) calculateAggregatedValues(snapshot *ClusterWorkloadS
 			snapshot.Nodes[metrics.nodeIndex].MemoryAllocated = metrics.memoryAllocated
 		}
 	}
-	
+
 	// Apply calculated values to namespaces
 	for _, metrics := range namespaceMetrics {
 		if metrics.namespaceIndex < len(snapshot.Namespaces) {
