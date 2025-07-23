@@ -95,6 +95,9 @@ type Config struct {
 	// For watching specific namespace, leave it empty for watching all.
 	// this config is ignored when watching namespaces
 	Namespace string `json:"namespace,omitempty"`
+
+	// Sync configuration for scheduled workload snapshots
+	Sync SyncConfig `json:"sync" yaml:"sync"`
 }
 
 // Slack contains slack configuration
@@ -145,9 +148,10 @@ type Flock struct {
 // Webhook contains webhook configuration
 type Webhook struct {
 	// Webhook URL.
-	Url     string `json:"url"`
-	Cert    string `json:"cert"`
-	TlsSkip bool   `json:"tlsskip"`
+	Url         string `json:"url"`
+	Cert        string `json:"cert"`
+	TlsSkip     bool   `json:"tlsskip"`
+	Compression bool   `json:"compression"`
 }
 
 // Lark contains lark configuration
@@ -309,6 +313,23 @@ func (c *Config) CheckMissingResourceEnvvars() {
 	if (c.Handler.SlackWebhook.Slackwebhookurl == "") && (os.Getenv("KW_SLACK_WEBHOOK_URL") != "") {
 		c.Handler.SlackWebhook.Slackwebhookurl = os.Getenv("KW_SLACK_WEBHOOK_URL")
 	}
+	
+	// Check for sync environment variables
+	if !c.Sync.Enabled && os.Getenv("KW_SYNC_ENABLED") == "true" {
+		c.Sync.Enabled = true
+	}
+	if !c.Sync.WorkloadSnapshot.Enabled && os.Getenv("KW_WORKLOAD_SYNC_ENABLED") == "true" {
+		c.Sync.WorkloadSnapshot.Enabled = true
+	}
+	if c.Sync.Interval == "" && os.Getenv("KW_SYNC_INTERVAL") != "" {
+		c.Sync.Interval = os.Getenv("KW_SYNC_INTERVAL")
+	}
+	if !c.Sync.Compression && os.Getenv("KW_SYNC_COMPRESSION") == "true" {
+		c.Sync.Compression = true
+	}
+	if !c.Handler.Webhook.Compression && os.Getenv("KW_WEBHOOK_COMPRESSION") == "true" {
+		c.Handler.Webhook.Compression = true
+	}
 }
 
 func (c *Config) Write() error {
@@ -347,4 +368,67 @@ func configDir() string {
 	//	os.Mkdir(path, 755)
 	//}
 	//return path
+}
+
+// SyncConfig contains configuration for scheduled workload snapshots
+type SyncConfig struct {
+	Enabled        bool   `json:"enabled" yaml:"enabled"`
+	Interval       string `json:"interval" yaml:"interval"`        // e.g., "1h", "30m", "24h"
+	Compression    bool   `json:"compression" yaml:"compression"`
+	BatchSize      int    `json:"batchSize" yaml:"batchSize"`
+	TimeoutSeconds int    `json:"timeoutSeconds" yaml:"timeoutSeconds"`
+	
+	// Retry configuration for failed sync operations
+	Retry RetryConfig `json:"retry" yaml:"retry"`
+	
+	// Workload snapshot specific configuration
+	WorkloadSnapshot WorkloadSyncConfig `json:"workloadSnapshot" yaml:"workloadSnapshot"`
+}
+
+// RetryConfig contains retry configuration for failed sync operations
+type RetryConfig struct {
+	MaxRetries      int    `json:"maxRetries" yaml:"maxRetries"`           // Maximum number of retry attempts (default: 3)
+	InitialInterval string `json:"initialInterval" yaml:"initialInterval"` // Initial backoff interval (default: "30s")
+	MaxInterval     string `json:"maxInterval" yaml:"maxInterval"`         // Maximum backoff interval (default: "10m")
+	Multiplier      float64 `json:"multiplier" yaml:"multiplier"`           // Backoff multiplier (default: 2.0)
+}
+
+// WorkloadSyncConfig contains workload-specific sync settings
+type WorkloadSyncConfig struct {
+	Enabled               bool `json:"enabled" yaml:"enabled"`
+	IncludeNodes          bool `json:"includeNodes" yaml:"includeNodes"`
+	IncludeServices       bool `json:"includeServices" yaml:"includeServices"`
+	IncludeHPA            bool `json:"includeHPA" yaml:"includeHPA"`
+	IncludeResourceStatus bool `json:"includeResourceStatus" yaml:"includeResourceStatus"`
+	IncludePodMetrics     bool `json:"includePodMetrics" yaml:"includePodMetrics"`
+}
+
+// SetSyncDefaults sets default values for sync configuration
+func (c *Config) SetSyncDefaults() {
+	if c.Sync.Interval == "" {
+		c.Sync.Interval = "1h"
+	}
+	if c.Sync.BatchSize == 0 {
+		c.Sync.BatchSize = 100
+	}
+	if c.Sync.TimeoutSeconds == 0 {
+		c.Sync.TimeoutSeconds = 30
+	}
+	
+	// Set retry defaults
+	if c.Sync.Retry.MaxRetries == 0 {
+		c.Sync.Retry.MaxRetries = 3
+	}
+	if c.Sync.Retry.InitialInterval == "" {
+		c.Sync.Retry.InitialInterval = "30s"
+	}
+	if c.Sync.Retry.MaxInterval == "" {
+		c.Sync.Retry.MaxInterval = "10m"
+	}
+	if c.Sync.Retry.Multiplier == 0 {
+		c.Sync.Retry.Multiplier = 2.0
+	}
+	
+	// Workload snapshot configuration is now fully user-controlled
+	// No automatic defaults are set to preserve user's explicit configuration
 }
