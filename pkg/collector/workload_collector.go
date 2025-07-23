@@ -50,8 +50,20 @@ func NewWorkloadCollector(client kubernetes.Interface, config *config.SyncConfig
 	}
 }
 
-// CollectWorkloadSnapshot collects a complete workload snapshot
-func (w *WorkloadCollector) CollectWorkloadSnapshot(ctx context.Context, namespace string) (*ClusterWorkloadSnapshot, error) {
+// CollectWorkloadSnapshotBatches collects a complete workload snapshot and returns it as batches
+func (w *WorkloadCollector) CollectWorkloadSnapshotBatches(ctx context.Context, namespace string) ([]*ClusterWorkloadSnapshot, error) {
+	// First collect the full snapshot
+	fullSnapshot, err := w.collectFullSnapshot(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	// Split into batches based on configuration
+	return w.splitIntoBatches(fullSnapshot), nil
+}
+
+// collectFullSnapshot collects a complete workload snapshot (internal method)
+func (w *WorkloadCollector) collectFullSnapshot(ctx context.Context, namespace string) (*ClusterWorkloadSnapshot, error) {
 	w.logger.Info("Starting workload snapshot collection")
 	startTime := time.Now()
 
@@ -1051,4 +1063,149 @@ func (w *WorkloadCollector) parseMemoryValue(value string) int {
 		return int(quantity.Value() / (1024 * 1024)) // Convert to MB
 	}
 	return 0
+}
+
+// splitIntoBatches splits a full snapshot into multiple batches based on configured batch size
+func (w *WorkloadCollector) splitIntoBatches(fullSnapshot *ClusterWorkloadSnapshot) []*ClusterWorkloadSnapshot {
+	batchSize := w.config.BatchSize
+	if batchSize <= 0 {
+		batchSize = 100 // Default batch size
+	}
+
+	// Calculate total items across all resource types
+	totalWorkloads := len(fullSnapshot.Workloads)
+	totalJobs := len(fullSnapshot.Jobs)
+	totalNodes := len(fullSnapshot.Nodes)
+	totalNamespaces := len(fullSnapshot.Namespaces)
+	totalItems := totalWorkloads + totalJobs + totalNodes + totalNamespaces
+
+	// If total items fit in one batch, return single batch
+	if totalItems <= batchSize {
+		fullSnapshot.Batch = &BatchMetadata{
+			BatchSequence: 1,
+			TotalBatches:  1,
+			IsFirstBatch:  true,
+			IsLastBatch:   true,
+			FullLoad:      true,
+		}
+		return []*ClusterWorkloadSnapshot{fullSnapshot}
+	}
+
+	// Calculate number of batches needed
+	totalBatches := (totalItems + batchSize - 1) / batchSize
+	batches := make([]*ClusterWorkloadSnapshot, 0, totalBatches)
+
+	w.logger.WithFields(logrus.Fields{
+		"total_items":    totalItems,
+		"batch_size":     batchSize,
+		"total_batches":  totalBatches,
+		"workloads":      totalWorkloads,
+		"jobs":           totalJobs,
+		"nodes":          totalNodes,
+		"namespaces":     totalNamespaces,
+	}).Info("Splitting snapshot into batches")
+
+	currentBatch := 1
+	currentBatchSize := 0
+
+	// Create first batch
+	batch := &ClusterWorkloadSnapshot{
+		Workloads:  []ServiceInfo{},
+		Jobs:       []JobInfo{},
+		Nodes:      []NodeInfo{},
+		Namespaces: []NamespaceInfo{},
+	}
+
+	// Helper function to finalize current batch
+	finalizeBatch := func() {
+		if currentBatchSize > 0 {
+			batch.Batch = &BatchMetadata{
+				BatchSequence: currentBatch,
+				TotalBatches:  totalBatches,
+				IsFirstBatch:  currentBatch == 1,
+				IsLastBatch:   currentBatch == totalBatches,
+				FullLoad:      true,
+			}
+			batches = append(batches, batch)
+			
+			w.logger.WithFields(logrus.Fields{
+				"batch":         currentBatch,
+				"batch_size":    currentBatchSize,
+				"workloads":     len(batch.Workloads),
+				"jobs":          len(batch.Jobs),
+				"nodes":         len(batch.Nodes),
+				"namespaces":    len(batch.Namespaces),
+			}).Debug("Created batch")
+
+			currentBatch++
+			currentBatchSize = 0
+			batch = &ClusterWorkloadSnapshot{
+				Workloads:  []ServiceInfo{},
+				Jobs:       []JobInfo{},
+				Nodes:      []NodeInfo{},
+				Namespaces: []NamespaceInfo{},
+			}
+		}
+	}
+
+	// Add workloads to batches
+	for _, workload := range fullSnapshot.Workloads {
+		if currentBatchSize >= batchSize {
+			finalizeBatch()
+		}
+		batch.Workloads = append(batch.Workloads, workload)
+		currentBatchSize++
+	}
+
+	// Add jobs to batches
+	for _, job := range fullSnapshot.Jobs {
+		if currentBatchSize >= batchSize {
+			finalizeBatch()
+		}
+		batch.Jobs = append(batch.Jobs, job)
+		currentBatchSize++
+	}
+
+	// Add nodes to batches
+	for _, node := range fullSnapshot.Nodes {
+		if currentBatchSize >= batchSize {
+			finalizeBatch()
+		}
+		batch.Nodes = append(batch.Nodes, node)
+		currentBatchSize++
+	}
+
+	// Add namespaces to batches
+	for _, namespace := range fullSnapshot.Namespaces {
+		if currentBatchSize >= batchSize {
+			finalizeBatch()
+		}
+		batch.Namespaces = append(batch.Namespaces, namespace)
+		currentBatchSize++
+	}
+
+	// Finalize the last batch
+	finalizeBatch()
+
+	w.logger.WithFields(logrus.Fields{
+		"total_batches_created": len(batches),
+		"expected_batches":      totalBatches,
+	}).Info("Completed batch splitting")
+
+	return batches
+}
+
+// CollectWorkloadSnapshot collects a complete workload snapshot (backward compatibility)
+func (w *WorkloadCollector) CollectWorkloadSnapshot(ctx context.Context, namespace string) (*ClusterWorkloadSnapshot, error) {
+	// For backward compatibility, return the first batch if there are multiple batches
+	batches, err := w.CollectWorkloadSnapshotBatches(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+	
+	if len(batches) > 1 {
+		w.logger.WithField("total_batches", len(batches)).Warn("Multiple batches created but returning only first batch for backward compatibility")
+	}
+	
+	return batches[0], nil
 }

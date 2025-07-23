@@ -16,12 +16,22 @@ limitations under the License.
 
 package collector
 
+// BatchMetadata contains batch processing information
+type BatchMetadata struct {
+	BatchSequence  int  `json:"batch_sequence"`  // Current batch number (1-indexed)
+	TotalBatches   int  `json:"total_batches"`   // Total number of batches
+	IsFirstBatch   bool `json:"is_first_batch"`  // True if this is the first batch
+	IsLastBatch    bool `json:"is_last_batch"`   // True if this is the last batch
+	FullLoad       bool `json:"full_load"`       // True if this is a full cluster discovery
+}
+
 // ClusterWorkloadSnapshot represents a complete workload snapshot of the cluster
 type ClusterWorkloadSnapshot struct {
 	Nodes      []NodeInfo      `json:"nodes,omitempty"`
 	Workloads  []ServiceInfo   `json:"workloads"`
 	Jobs       []JobInfo       `json:"jobs,omitempty"`
 	Namespaces []NamespaceInfo `json:"namespaces,omitempty"`
+	Batch      *BatchMetadata  `json:"batch,omitempty"`
 }
 
 // EnvVar represents an environment variable

@@ -178,15 +178,18 @@ func (ws *WorkloadScheduler) attemptSync() error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(ws.config.Sync.TimeoutSeconds)*time.Second)
 	defer cancel()
 	
-	// Collect workload snapshot
-	snapshot, err := ws.collector.CollectWorkloadSnapshot(ctx, ws.config.Namespace)
+	// Collect workload snapshot batches
+	batches, err := ws.collector.CollectWorkloadSnapshotBatches(ctx, ws.config.Namespace)
 	if err != nil {
 		return fmt.Errorf("failed to collect workload snapshot: %w", err)
 	}
 	
-	// Handle the snapshot based on handler type
-	if err := ws.handleWorkloadSnapshot(snapshot, startTime); err != nil {
-		return fmt.Errorf("failed to handle workload snapshot: %w", err)
+	// Handle each batch
+	for _, batch := range batches {
+		if err := ws.handleWorkloadSnapshot(batch, startTime); err != nil {
+			return fmt.Errorf("failed to handle workload snapshot batch %d/%d: %w", 
+				batch.Batch.BatchSequence, batch.Batch.TotalBatches, err)
+		}
 	}
 	
 	return nil
