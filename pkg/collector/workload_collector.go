@@ -539,16 +539,17 @@ func (w *WorkloadCollector) convertJobToJobInfo(job *batch_v1.Job) JobInfo {
 	}
 
 	return JobInfo{
-		Name:        job.Name,
-		Namespace:   job.Namespace,
-		Type:        SERVICE_TYPE_JOB,
-		CreatedAt:   creationTime,
-		Deleted:     false,
-		CPUReq:      cpuReq,
-		MemReq:      memReq,
-		Completions: completions,
-		Status:      jobStatus,
-		JobData:     jobData,
+		Name:            job.Name,
+		Namespace:       job.Namespace,
+		Type:            SERVICE_TYPE_JOB,
+		CreatedAt:       creationTime,
+		Deleted:         false,
+		CPUReq:          cpuReq,
+		MemReq:          memReq,
+		Completions:     completions,
+		Status:          jobStatus,
+		JobData:         jobData,
+		ResourceVersion: w.parseResourceVersion(job.ResourceVersion),
 	}
 }
 
@@ -1183,11 +1184,12 @@ func (w *WorkloadCollector) convertNamespaceToNamespaceInfo(ns *api_v1.Namespace
 	creationTime := ns.CreationTimestamp.Time.Format(time.RFC3339)
 
 	return NamespaceInfo{
-		Name:          ns.Name,
-		Deleted:       false,
-		WorkloadCount: 0, // Will be calculated in calculateAggregatedValues
-		PodCount:      0, // Will be calculated in calculateAggregatedValues
-		CreationTime:  &creationTime,
+		Name:            ns.Name,
+		Deleted:         false,
+		WorkloadCount:   0, // Will be calculated in calculateAggregatedValues
+		PodCount:        0, // Will be calculated in calculateAggregatedValues
+		CreationTime:    &creationTime,
+		ResourceVersion: w.parseResourceVersion(ns.ResourceVersion),
 	}
 }
 
