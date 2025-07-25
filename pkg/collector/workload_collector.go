@@ -79,7 +79,7 @@ func (w *WorkloadCollector) collectFullSnapshot(ctx context.Context, namespace s
 	errChan := make(chan error, 10)
 
 	// Collect workloads (using ServiceInfo for all workload types)
-	wg.Add(5)
+	wg.Add(4)
 	go w.collectDeployments(ctx, namespace, &snapshot.Workloads, &mu, &wg, errChan)
 	go w.collectDaemonSets(ctx, namespace, &snapshot.Workloads, &mu, &wg, errChan)
 	go w.collectStatefulSets(ctx, namespace, &snapshot.Workloads, &mu, &wg, errChan)
