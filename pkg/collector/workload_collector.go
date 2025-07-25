@@ -314,6 +314,9 @@ func (w *WorkloadCollector) convertDeploymentToServiceInfo(dep *apps_v1.Deployme
 	isHelmRelease := w.isHelmRelease(dep.Labels)
 	creationTime := dep.CreationTimestamp.Time.Format(time.RFC3339)
 
+	// Convert deployment status to status dict
+	statusDict := w.convertDeploymentStatusToDict(dep)
+
 	return ServiceInfo{
 		ResourceVersion: resourceVersion,
 		Name:            dep.Name,
@@ -326,6 +329,7 @@ func (w *WorkloadCollector) convertDeploymentToServiceInfo(dep *apps_v1.Deployme
 		TotalPods:       int(*dep.Spec.Replicas),
 		IsHelmRelease:   isHelmRelease,
 		Status:          &status,
+		StatusDict:      statusDict,
 		CreationTime:    &creationTime,
 	}
 }
@@ -354,6 +358,9 @@ func (w *WorkloadCollector) convertDaemonSetToServiceInfo(ds *apps_v1.DaemonSet)
 	isHelmRelease := w.isHelmRelease(ds.Labels)
 	creationTime := ds.CreationTimestamp.Time.Format(time.RFC3339)
 
+	// Convert daemonset status to status dict
+	statusDict := w.convertDaemonSetStatusToDict(ds)
+
 	return ServiceInfo{
 		ResourceVersion: resourceVersion,
 		Name:            ds.Name,
@@ -366,6 +373,7 @@ func (w *WorkloadCollector) convertDaemonSetToServiceInfo(ds *apps_v1.DaemonSet)
 		TotalPods:       int(ds.Status.DesiredNumberScheduled),
 		IsHelmRelease:   isHelmRelease,
 		Status:          &status,
+		StatusDict:      statusDict,
 		CreationTime:    &creationTime,
 	}
 }
@@ -394,6 +402,9 @@ func (w *WorkloadCollector) convertStatefulSetToServiceInfo(ss *apps_v1.Stateful
 	isHelmRelease := w.isHelmRelease(ss.Labels)
 	creationTime := ss.CreationTimestamp.Time.Format(time.RFC3339)
 
+	// Convert statefulset status to status dict
+	statusDict := w.convertStatefulSetStatusToDict(ss)
+
 	return ServiceInfo{
 		ResourceVersion: resourceVersion,
 		Name:            ss.Name,
@@ -406,6 +417,7 @@ func (w *WorkloadCollector) convertStatefulSetToServiceInfo(ss *apps_v1.Stateful
 		TotalPods:       int(*ss.Spec.Replicas),
 		IsHelmRelease:   isHelmRelease,
 		Status:          &status,
+		StatusDict:      statusDict,
 		CreationTime:    &creationTime,
 	}
 }
@@ -442,6 +454,9 @@ func (w *WorkloadCollector) convertPodToServiceInfo(pod *api_v1.Pod) ServiceInfo
 		restartCount[containerStatus.Name] = int(containerStatus.RestartCount)
 	}
 
+	// Convert pod status to status dict
+	statusDict := w.convertPodStatusToDict(pod)
+
 	return ServiceInfo{
 		ResourceVersion: resourceVersion,
 		Name:            pod.Name,
@@ -454,6 +469,7 @@ func (w *WorkloadCollector) convertPodToServiceInfo(pod *api_v1.Pod) ServiceInfo
 		TotalPods:       1,
 		IsHelmRelease:   isHelmRelease,
 		Status:          &status,
+		StatusDict:      statusDict,
 		NodeName:        &pod.Spec.NodeName,
 		RestartCount:    restartCount,
 		CreationTime:    &creationTime,
@@ -699,6 +715,281 @@ func (w *WorkloadCollector) convertNodeToNodeInfo(node *api_v1.Node) NodeInfo {
 }
 
 // Helper functions
+
+// convertPodStatusToDict converts pod status to a dictionary matching the expected format
+func (w *WorkloadCollector) convertPodStatusToDict(pod *api_v1.Pod) map[string]interface{} {
+	if pod == nil {
+		return nil
+	}
+
+	statusDict := make(map[string]interface{})
+	
+	// Basic status fields
+	statusDict["phase"] = string(pod.Status.Phase)
+	if pod.Status.Message != "" {
+		statusDict["message"] = pod.Status.Message
+	}
+	if pod.Status.Reason != "" {
+		statusDict["reason"] = pod.Status.Reason
+	}
+	if pod.Status.PodIP != "" {
+		statusDict["podIP"] = pod.Status.PodIP
+	}
+	if pod.Status.HostIP != "" {
+		statusDict["hostIP"] = pod.Status.HostIP
+	}
+	if pod.Status.StartTime != nil {
+		statusDict["startTime"] = pod.Status.StartTime.Format(time.RFC3339)
+	}
+
+	// Pod conditions
+	if len(pod.Status.Conditions) > 0 {
+		conditions := make([]map[string]interface{}, 0, len(pod.Status.Conditions))
+		for _, condition := range pod.Status.Conditions {
+			conditionMap := map[string]interface{}{
+				"type":   string(condition.Type),
+				"status": string(condition.Status),
+			}
+			if condition.Reason != "" {
+				conditionMap["reason"] = condition.Reason
+			}
+			if condition.Message != "" {
+				conditionMap["message"] = condition.Message
+			}
+			if !condition.LastTransitionTime.IsZero() {
+				conditionMap["lastTransitionTime"] = condition.LastTransitionTime.Format(time.RFC3339)
+			}
+			conditions = append(conditions, conditionMap)
+		}
+		statusDict["conditions"] = conditions
+	}
+
+	// Container statuses
+	if len(pod.Status.ContainerStatuses) > 0 {
+		containerStatuses := make([]map[string]interface{}, 0, len(pod.Status.ContainerStatuses))
+		for _, cs := range pod.Status.ContainerStatuses {
+			containerStatus := map[string]interface{}{
+				"name":         cs.Name,
+				"ready":        cs.Ready,
+				"restartCount": cs.RestartCount,
+				"image":        cs.Image,
+			}
+			if cs.ImageID != "" {
+				containerStatus["imageID"] = cs.ImageID
+			}
+			if cs.ContainerID != "" {
+				containerStatus["containerID"] = cs.ContainerID
+			}
+			if cs.Started != nil {
+				containerStatus["started"] = *cs.Started
+			}
+			
+			// Container state information
+			if cs.State.Running != nil {
+				containerStatus["state"] = map[string]interface{}{
+					"running": map[string]interface{}{
+						"startedAt": cs.State.Running.StartedAt.Format(time.RFC3339),
+					},
+				}
+			} else if cs.State.Waiting != nil {
+				waitingState := map[string]interface{}{}
+				if cs.State.Waiting.Reason != "" {
+					waitingState["reason"] = cs.State.Waiting.Reason
+				}
+				if cs.State.Waiting.Message != "" {
+					waitingState["message"] = cs.State.Waiting.Message
+				}
+				containerStatus["state"] = map[string]interface{}{
+					"waiting": waitingState,
+				}
+			} else if cs.State.Terminated != nil {
+				terminatedState := map[string]interface{}{
+					"exitCode": cs.State.Terminated.ExitCode,
+				}
+				if cs.State.Terminated.Reason != "" {
+					terminatedState["reason"] = cs.State.Terminated.Reason
+				}
+				if cs.State.Terminated.Message != "" {
+					terminatedState["message"] = cs.State.Terminated.Message
+				}
+				if !cs.State.Terminated.StartedAt.IsZero() {
+					terminatedState["startedAt"] = cs.State.Terminated.StartedAt.Format(time.RFC3339)
+				}
+				if !cs.State.Terminated.FinishedAt.IsZero() {
+					terminatedState["finishedAt"] = cs.State.Terminated.FinishedAt.Format(time.RFC3339)
+				}
+				containerStatus["state"] = map[string]interface{}{
+					"terminated": terminatedState,
+				}
+			}
+			
+			containerStatuses = append(containerStatuses, containerStatus)
+		}
+		statusDict["containerStatuses"] = containerStatuses
+	}
+
+	// Init container statuses
+	if len(pod.Status.InitContainerStatuses) > 0 {
+		initContainerStatuses := make([]map[string]interface{}, 0, len(pod.Status.InitContainerStatuses))
+		for _, cs := range pod.Status.InitContainerStatuses {
+			initContainerStatus := map[string]interface{}{
+				"name":         cs.Name,
+				"ready":        cs.Ready,
+				"restartCount": cs.RestartCount,
+				"image":        cs.Image,
+			}
+			if cs.ImageID != "" {
+				initContainerStatus["imageID"] = cs.ImageID
+			}
+			if cs.ContainerID != "" {
+				initContainerStatus["containerID"] = cs.ContainerID
+			}
+			initContainerStatuses = append(initContainerStatuses, initContainerStatus)
+		}
+		statusDict["initContainerStatuses"] = initContainerStatuses
+	}
+
+	// QOS Class
+	if pod.Status.QOSClass != "" {
+		statusDict["qosClass"] = string(pod.Status.QOSClass)
+	}
+
+	return statusDict
+}
+
+// convertDeploymentStatusToDict converts deployment status to a dictionary
+func (w *WorkloadCollector) convertDeploymentStatusToDict(dep *apps_v1.Deployment) map[string]interface{} {
+	if dep == nil {
+		return nil
+	}
+
+	statusDict := make(map[string]interface{})
+	
+	// Basic status fields
+	statusDict["replicas"] = dep.Status.Replicas
+	statusDict["readyReplicas"] = dep.Status.ReadyReplicas
+	statusDict["availableReplicas"] = dep.Status.AvailableReplicas
+	statusDict["unavailableReplicas"] = dep.Status.UnavailableReplicas
+	statusDict["updatedReplicas"] = dep.Status.UpdatedReplicas
+	statusDict["observedGeneration"] = dep.Status.ObservedGeneration
+
+	// Deployment conditions
+	if len(dep.Status.Conditions) > 0 {
+		conditions := make([]map[string]interface{}, 0, len(dep.Status.Conditions))
+		for _, condition := range dep.Status.Conditions {
+			conditionMap := map[string]interface{}{
+				"type":   string(condition.Type),
+				"status": string(condition.Status),
+			}
+			if condition.Reason != "" {
+				conditionMap["reason"] = condition.Reason
+			}
+			if condition.Message != "" {
+				conditionMap["message"] = condition.Message
+			}
+			if !condition.LastTransitionTime.IsZero() {
+				conditionMap["lastTransitionTime"] = condition.LastTransitionTime.Format(time.RFC3339)
+			}
+			if !condition.LastUpdateTime.IsZero() {
+				conditionMap["lastUpdateTime"] = condition.LastUpdateTime.Format(time.RFC3339)
+			}
+			conditions = append(conditions, conditionMap)
+		}
+		statusDict["conditions"] = conditions
+	}
+
+	return statusDict
+}
+
+// convertDaemonSetStatusToDict converts daemonset status to a dictionary
+func (w *WorkloadCollector) convertDaemonSetStatusToDict(ds *apps_v1.DaemonSet) map[string]interface{} {
+	if ds == nil {
+		return nil
+	}
+
+	statusDict := make(map[string]interface{})
+	
+	// Basic status fields
+	statusDict["currentNumberScheduled"] = ds.Status.CurrentNumberScheduled
+	statusDict["desiredNumberScheduled"] = ds.Status.DesiredNumberScheduled
+	statusDict["numberAvailable"] = ds.Status.NumberAvailable
+	statusDict["numberMisscheduled"] = ds.Status.NumberMisscheduled
+	statusDict["numberReady"] = ds.Status.NumberReady
+	statusDict["numberUnavailable"] = ds.Status.NumberUnavailable
+	statusDict["observedGeneration"] = ds.Status.ObservedGeneration
+	statusDict["updatedNumberScheduled"] = ds.Status.UpdatedNumberScheduled
+
+	// DaemonSet conditions
+	if len(ds.Status.Conditions) > 0 {
+		conditions := make([]map[string]interface{}, 0, len(ds.Status.Conditions))
+		for _, condition := range ds.Status.Conditions {
+			conditionMap := map[string]interface{}{
+				"type":   string(condition.Type),
+				"status": string(condition.Status),
+			}
+			if condition.Reason != "" {
+				conditionMap["reason"] = condition.Reason
+			}
+			if condition.Message != "" {
+				conditionMap["message"] = condition.Message
+			}
+			if !condition.LastTransitionTime.IsZero() {
+				conditionMap["lastTransitionTime"] = condition.LastTransitionTime.Format(time.RFC3339)
+			}
+			conditions = append(conditions, conditionMap)
+		}
+		statusDict["conditions"] = conditions
+	}
+
+	return statusDict
+}
+
+// convertStatefulSetStatusToDict converts statefulset status to a dictionary
+func (w *WorkloadCollector) convertStatefulSetStatusToDict(ss *apps_v1.StatefulSet) map[string]interface{} {
+	if ss == nil {
+		return nil
+	}
+
+	statusDict := make(map[string]interface{})
+	
+	// Basic status fields
+	statusDict["replicas"] = ss.Status.Replicas
+	statusDict["readyReplicas"] = ss.Status.ReadyReplicas
+	statusDict["currentReplicas"] = ss.Status.CurrentReplicas
+	statusDict["updatedReplicas"] = ss.Status.UpdatedReplicas
+	statusDict["observedGeneration"] = ss.Status.ObservedGeneration
+	if ss.Status.CurrentRevision != "" {
+		statusDict["currentRevision"] = ss.Status.CurrentRevision
+	}
+	if ss.Status.UpdateRevision != "" {
+		statusDict["updateRevision"] = ss.Status.UpdateRevision
+	}
+	statusDict["collisionCount"] = ss.Status.CollisionCount
+
+	// StatefulSet conditions
+	if len(ss.Status.Conditions) > 0 {
+		conditions := make([]map[string]interface{}, 0, len(ss.Status.Conditions))
+		for _, condition := range ss.Status.Conditions {
+			conditionMap := map[string]interface{}{
+				"type":   string(condition.Type),
+				"status": string(condition.Status),
+			}
+			if condition.Reason != "" {
+				conditionMap["reason"] = condition.Reason
+			}
+			if condition.Message != "" {
+				conditionMap["message"] = condition.Message
+			}
+			if !condition.LastTransitionTime.IsZero() {
+				conditionMap["lastTransitionTime"] = condition.LastTransitionTime.Format(time.RFC3339)
+			}
+			conditions = append(conditions, conditionMap)
+		}
+		statusDict["conditions"] = conditions
+	}
+
+	return statusDict
+}
 
 func (w *WorkloadCollector) ensureLabels(labels map[string]string) map[string]string {
 	if labels == nil {
