@@ -84,7 +84,6 @@ func (w *WorkloadCollector) collectFullSnapshot(ctx context.Context, namespace s
 	go w.collectDaemonSets(ctx, namespace, &snapshot.Workloads, &mu, &wg, errChan)
 	go w.collectStatefulSets(ctx, namespace, &snapshot.Workloads, &mu, &wg, errChan)
 	go w.collectPods(ctx, namespace, &snapshot.Workloads, &mu, &wg, errChan)
-	go w.collectServices(ctx, namespace, &snapshot.Workloads, &mu, &wg, errChan)
 
 	// Collect jobs separately
 	wg.Add(1)
@@ -203,27 +202,6 @@ func (w *WorkloadCollector) collectPods(ctx context.Context, namespace string, w
 	}
 
 	w.logger.WithField("count", len(pods.Items)).Debug("Collected pods")
-}
-
-// collectServices collects services as ServiceInfo
-func (w *WorkloadCollector) collectServices(ctx context.Context, namespace string, workloads *[]ServiceInfo, mu *sync.Mutex, wg *sync.WaitGroup, errChan chan error) {
-	defer wg.Done()
-
-	services, err := w.client.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		errChan <- err
-		return
-	}
-
-	for _, svc := range services.Items {
-		serviceInfo := w.convertServiceToServiceInfo(&svc)
-
-		mu.Lock()
-		*workloads = append(*workloads, serviceInfo)
-		mu.Unlock()
-	}
-
-	w.logger.WithField("count", len(services.Items)).Debug("Collected services")
 }
 
 // collectJobs collects jobs as JobInfo
@@ -476,38 +454,6 @@ func (w *WorkloadCollector) convertPodToServiceInfo(pod *api_v1.Pod) ServiceInfo
 	}
 }
 
-// convertServiceToServiceInfo converts a service to ServiceInfo
-func (w *WorkloadCollector) convertServiceToServiceInfo(svc *api_v1.Service) ServiceInfo {
-	resourceVersion := w.parseResourceVersion(svc.ResourceVersion)
-
-	serviceConfig := &ServiceConfig{
-		Labels:      w.ensureLabels(svc.Labels),
-		Containers:  w.extractContainers(nil), // Services don't have containers
-		Volumes:     w.extractVolumes(nil),    // Services don't have volumes
-		Owner:       w.extractOwners(svc.OwnerReferences, svc.Namespace),
-		Annotations: w.convertAnnotations(svc.Annotations),
-	}
-
-	status := "Active"
-	isHelmRelease := w.isHelmRelease(svc.Labels)
-	creationTime := svc.CreationTimestamp.Time.Format(time.RFC3339)
-
-	return ServiceInfo{
-		ResourceVersion: resourceVersion,
-		Name:            svc.Name,
-		ServiceType:     SERVICE_TYPE_SERVICE,
-		Namespace:       svc.Namespace,
-		Classification:  "service",
-		Deleted:         false,
-		ServiceConfig:   serviceConfig,
-		ReadyPods:       0, // Services don't have direct pod counts
-		TotalPods:       0,
-		IsHelmRelease:   isHelmRelease,
-		Status:          &status,
-		CreationTime:    &creationTime,
-	}
-}
-
 // convertJobToJobInfo converts a job to JobInfo
 func (w *WorkloadCollector) convertJobToJobInfo(job *batch_v1.Job) JobInfo {
 	creationTime := job.CreationTimestamp.Time.Format(time.RFC3339)
@@ -723,7 +669,7 @@ func (w *WorkloadCollector) convertPodStatusToDict(pod *api_v1.Pod) map[string]i
 	}
 
 	statusDict := make(map[string]interface{})
-	
+
 	// Basic status fields
 	statusDict["phase"] = string(pod.Status.Phase)
 	if pod.Status.Message != "" {
@@ -783,7 +729,7 @@ func (w *WorkloadCollector) convertPodStatusToDict(pod *api_v1.Pod) map[string]i
 			if cs.Started != nil {
 				containerStatus["started"] = *cs.Started
 			}
-			
+
 			// Container state information
 			if cs.State.Running != nil {
 				containerStatus["state"] = map[string]interface{}{
@@ -822,7 +768,7 @@ func (w *WorkloadCollector) convertPodStatusToDict(pod *api_v1.Pod) map[string]i
 					"terminated": terminatedState,
 				}
 			}
-			
+
 			containerStatuses = append(containerStatuses, containerStatus)
 		}
 		statusDict["containerStatuses"] = containerStatuses
@@ -864,7 +810,7 @@ func (w *WorkloadCollector) convertDeploymentStatusToDict(dep *apps_v1.Deploymen
 	}
 
 	statusDict := make(map[string]interface{})
-	
+
 	// Basic status fields
 	statusDict["replicas"] = dep.Status.Replicas
 	statusDict["readyReplicas"] = dep.Status.ReadyReplicas
@@ -908,7 +854,7 @@ func (w *WorkloadCollector) convertDaemonSetStatusToDict(ds *apps_v1.DaemonSet) 
 	}
 
 	statusDict := make(map[string]interface{})
-	
+
 	// Basic status fields
 	statusDict["currentNumberScheduled"] = ds.Status.CurrentNumberScheduled
 	statusDict["desiredNumberScheduled"] = ds.Status.DesiredNumberScheduled
@@ -951,7 +897,7 @@ func (w *WorkloadCollector) convertStatefulSetStatusToDict(ss *apps_v1.StatefulS
 	}
 
 	statusDict := make(map[string]interface{})
-	
+
 	// Basic status fields
 	statusDict["replicas"] = ss.Status.Replicas
 	statusDict["readyReplicas"] = ss.Status.ReadyReplicas
@@ -1054,10 +1000,8 @@ func (w *WorkloadCollector) extractEnvVars(envVars []api_v1.EnvVar) []EnvVar {
 
 func (w *WorkloadCollector) extractResourceMap(resources api_v1.ResourceList) map[string]string {
 	result := make(map[string]string)
-	if resources != nil {
-		for key, value := range resources {
-			result[string(key)] = value.String()
-		}
+	for key, value := range resources {
+		result[string(key)] = value.String()
 	}
 	return result
 }
@@ -1146,10 +1090,8 @@ func (w *WorkloadCollector) getDeploymentFromReplicaSet(replicaSetName, namespac
 
 func (w *WorkloadCollector) convertAnnotations(annotations map[string]string) map[string]interface{} {
 	result := make(map[string]interface{})
-	if annotations != nil {
-		for key, value := range annotations {
-			result[key] = value
-		}
+	for key, value := range annotations {
+		result[key] = value
 	}
 	return result
 }
