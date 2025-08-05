@@ -18,11 +18,11 @@ package collector
 
 // BatchMetadata contains batch processing information
 type BatchMetadata struct {
-	BatchSequence  int  `json:"batch_sequence"`  // Current batch number (1-indexed)
-	TotalBatches   int  `json:"total_batches"`   // Total number of batches
-	IsFirstBatch   bool `json:"is_first_batch"`  // True if this is the first batch
-	IsLastBatch    bool `json:"is_last_batch"`   // True if this is the last batch
-	FullLoad       bool `json:"full_load"`       // True if this is a full cluster discovery
+	BatchSequence int  `json:"batch_sequence"` // Current batch number (1-indexed)
+	TotalBatches  int  `json:"total_batches"`  // Total number of batches
+	IsFirstBatch  bool `json:"is_first_batch"` // True if this is the first batch
+	IsLastBatch   bool `json:"is_last_batch"`  // True if this is the last batch
+	FullLoad      bool `json:"full_load"`      // True if this is a full cluster discovery
 }
 
 // ClusterWorkloadSnapshot represents a complete workload snapshot of the cluster
@@ -178,25 +178,27 @@ type JobData struct {
 
 // JobInfo contains job information
 type JobInfo struct {
-	Name        string    `json:"name"`
-	Namespace   string    `json:"namespace"`
-	Type        string    `json:"type"`
-	CreatedAt   string    `json:"created_at"`
-	Deleted     bool      `json:"deleted"`
-	CPUReq      float64   `json:"cpu_req"`
-	MemReq      int       `json:"mem_req"`
-	Completions int       `json:"completions"`
-	Status      JobStatus `json:"status"`
-	JobData     JobData   `json:"job_data"`
+	Name            string    `json:"name"`
+	Namespace       string    `json:"namespace"`
+	Type            string    `json:"type"`
+	CreatedAt       string    `json:"created_at"`
+	Deleted         bool      `json:"deleted"`
+	CPUReq          float64   `json:"cpu_req"`
+	MemReq          int       `json:"mem_req"`
+	Completions     int       `json:"completions"`
+	Status          JobStatus `json:"status"`
+	JobData         JobData   `json:"job_data"`
+	ResourceVersion int       `json:"resource_version"`
 }
 
 // NamespaceInfo contains namespace information
 type NamespaceInfo struct {
-	Name           string  `json:"name"`
-	Deleted        bool    `json:"deleted"`
-	WorkloadCount  int     `json:"workload_count"`
-	PodCount       int     `json:"pod_count"`
-	CreationTime   *string `json:"creation_time,omitempty"`
+	Name            string  `json:"name"`
+	Deleted         bool    `json:"deleted"`
+	WorkloadCount   int     `json:"workload_count"`
+	PodCount        int     `json:"pod_count"`
+	CreationTime    *string `json:"creation_time,omitempty"`
+	ResourceVersion int     `json:"resource_version"`
 }
 
 // WorkloadSyncMetadata contains metadata about the sync operation
