@@ -400,7 +400,6 @@ type RetryConfig struct {
 type WorkloadSyncConfig struct {
 	Enabled               bool `json:"enabled" yaml:"enabled"`
 	IncludeNodes          bool `json:"includeNodes" yaml:"includeNodes"`
-	IncludeServices       bool `json:"includeServices" yaml:"includeServices"`
 	IncludeHPA            bool `json:"includeHPA" yaml:"includeHPA"`
 	IncludeResourceStatus bool `json:"includeResourceStatus" yaml:"includeResourceStatus"`
 	IncludePodMetrics     bool `json:"includePodMetrics" yaml:"includePodMetrics"`

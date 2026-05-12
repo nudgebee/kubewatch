@@ -31,4 +31,3 @@ sync:
   workloadSnapshot:
     enabled: true
     includeNodes: true
-    includeServices: true
