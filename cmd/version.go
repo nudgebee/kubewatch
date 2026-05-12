@@ -22,7 +22,9 @@ import (
 )
 
 var (
-	buildDate, gitCommit string
+	version   = "dev"
+	gitCommit = "unknown"
+	buildDate = "unknown"
 )
 
 var versionCmd = &cobra.Command{
@@ -35,6 +37,7 @@ var versionCmd = &cobra.Command{
 }
 
 func versionPrettyString() {
+	logrus.Info("version:   ", version)
 	logrus.Info("gitCommit: ", gitCommit)
 	logrus.Info("buildDate: ", buildDate)
 }

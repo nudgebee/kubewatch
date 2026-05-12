@@ -3,13 +3,21 @@
 # linked (CGO_ENABLED=0) so glibc CVEs in other base images do not apply here.
 FROM golang:1.26.2-alpine AS builder
 ARG TARGETARCH
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
 RUN apk add --no-cache build-base
 
 WORKDIR /src/kubewatch
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a -ldflags="-s -w" -o /kubewatch
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -a \
+    -ldflags="-s -w \
+      -X github.com/bitnami-labs/kubewatch/cmd.version=${VERSION} \
+      -X github.com/bitnami-labs/kubewatch/cmd.gitCommit=${GIT_COMMIT} \
+      -X github.com/bitnami-labs/kubewatch/cmd.buildDate=${BUILD_DATE}" \
+    -o /kubewatch
 
 FROM alpine:latest
 
