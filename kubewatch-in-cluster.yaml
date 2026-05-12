@@ -5,7 +5,7 @@ metadata:
   namespace: default
 spec:
   containers:
-  - image: tuna/kubewatch:v0.0.1
+  - image: ghcr.io/nudgebee/kubewatch:latest
     imagePullPolicy: Always
     name: kubewatch
     volumeMounts:
