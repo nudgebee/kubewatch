@@ -1,37 +1,55 @@
 <div align="center">
 
-**This is the official Kubewatch project, [originally by Bitnami](https://github.com/bitnami-labs/kubewatch/), now maintained by [Robusta.dev](https://home.robusta.dev/).**
-
-**Feel free to open issues, raise PRs or talk with us on [Slack](https://bit.ly/robusta-slack)!**
-
-**kubewatch** is a Kubernetes watcher that publishes notification to available collaboration hubs/notification channels. Run it in your k8s cluster, and you will get event notifications through webhooks.
-
-[See the blog post on KubeWatch 2.0 to learn more about how KubeWatch is used.](https://home.robusta.dev/blog/kubewatch-2-0-released)
-
 <img src="./docs/kubewatch-logo.jpeg">
 
-[![GoDoc](https://godoc.org/github.com/bitnami-labs/kubewatch?status.svg)](https://godoc.org/github.com/bitnami-labs/kubewatch) [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/bitnami-labs/kubewatch/blob/master/LICENSE)
-[![slack robusta](https://img.shields.io/badge/Slack-Join-4A154B?style=flat-square&logo=slack&logoColor=white)](https://bit.ly/robusta-slack)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
 </div>
 
-# Fine-Grained Resource Tracking
+# kubewatch (Nudgebee fork)
 
-KubeWatch tracks all changes to Kubernetes resources of given types.
+This is [Nudgebee](https://nudgebee.com)'s fork of
+[`robusta-dev/kubewatch`](https://github.com/robusta-dev/kubewatch),
+itself originally created by [Bitnami](https://github.com/bitnami-labs/kubewatch).
+Licensed under Apache 2.0.
 
-If you need fine-grained filtering of which changes are forwarded, you can use KubeWatch in conjunction with Robusta.
+`kubewatch` watches Kubernetes resources and publishes notifications to
+collaboration hubs (Slack, Teams, Mattermost, etc.) and generic
+HTTP/CloudEvent webhooks.
 
-For more details, refer to the [Robusta docs on change-tracking](https://docs.robusta.dev/master/playbook-reference/kubernetes-examples/index.html). 
+## What this fork adds
 
-A diagram showing the two options is shown below. The flow that only uses KubeWatch is purple and the flow that adds Robusta is green.
+- **Periodic cluster workload sync** — sends a complete snapshot of
+  workloads, jobs, nodes, and namespaces to a webhook endpoint on a
+  configurable interval, in addition to the event stream. Snapshots are
+  batched and gzip-compressible for large clusters.
+- **Configurable retry with exponential backoff** for failed sync
+  publishes.
+- **CloudEvent and webhook handlers** carry both the change stream and
+  the periodic snapshots; receivers can consume either or both.
 
-![image](https://github.com/user-attachments/assets/b271e635-70d6-4bc8-9f61-4c8ae4771be4)
+See `examples/conf/kubewatch.conf.sync-with-retry.yaml` for a sample
+configuration.
 
-# Latest image
+## What this fork removes (vs upstream)
+
+- Advanced event filtering (`pkg/filter`)
+- Prometheus metrics endpoint (`pkg/metrics`) — removed in favour of
+  upstream consumers handling observability.
+- The bundled Helm chart — install via the manifests in this repo or
+  package your own.
+
+## Container image
+
+Multi-arch (`linux/amd64`, `linux/arm64`):
 
 ```
-robustadev/kubewatch:v2.9.0
+ghcr.io/nudgebee/kubewatch:latest
+ghcr.io/nudgebee/kubewatch:vX.Y.Z
 ```
+
+Pull with `docker pull ghcr.io/nudgebee/kubewatch:latest` once the
+package is published.
 
 # Usage
 ```
@@ -73,63 +91,11 @@ Use "kubewatch [command] --help" for more information about a command.
 # Install
 
 ### Cluster Installation
-#### Using helm:
-
-When you have helm installed in your cluster, use the following setup:
-
-```console
-helm repo add robusta https://robusta-charts.storage.googleapis.com && helm repo update
-helm install kubewatch robusta/kubewatch --set='rbac.create=true,slack.channel=#YOUR_CHANNEL,slack.token=xoxb-YOUR_TOKEN,resourcesToWatch.pod=true,resourcesToWatch.daemonset=true'
-```
-
-You may also provide a values file instead:
-
-```yaml
-rbac:
-  create: true
-  customRoles:
-    - apiGroups: ["monitoring.coreos.com"]
-      resources: ["prometheusrules"]
-      verbs: ["get", "list", "watch"]
-resourcesToWatch:
-  deployment: false
-  replicationcontroller: false
-  replicaset: false
-  daemonset: false
-  services: true
-  pod: true
-  job: false
-  node: false
-  clusterrole: true
-  clusterrolebinding: true
-  serviceaccount: true
-  persistentvolume: false
-  namespace: false
-  secret: false
-  configmap: false
-  ingress: false
-  coreevent: false
-  event: true
-customresources:
-  - group: monitoring.coreos.com
-    version: v1
-    resource: prometheusrules
-slack:
-  channel: '#YOUR_CHANNEL'
-  token: 'xoxb-YOUR_TOKEN'
-```
-
-And use that:
-
-```console
-$ helm upgrade --install kubewatch robusta/kubewatch --values=values-file.yml
-```
-
 #### Using kubectl:
 
-In order to run kubewatch in a Kubernetes cluster quickly, the easiest way is for you to create a [ConfigMap](https://github.com/robusta-dev/kubewatch/blob/master/kubewatch-configmap.yaml) to hold kubewatch configuration.
+In order to run kubewatch in a Kubernetes cluster quickly, the easiest way is for you to create a [ConfigMap](./kubewatch-configmap.yaml) to hold kubewatch configuration.
 
-An example is provided at [`kubewatch-configmap.yaml`](https://github.com/robusta-dev/kubewatch/blob/master/kubewatch-configmap.yaml), do not forget to update your own slack channel and token parameters. Alternatively, you could use secrets.
+An example is provided at [`kubewatch-configmap.yaml`](./kubewatch-configmap.yaml); update your own slack channel and token parameters or use a Secret instead.
 
 Create k8s configmap:
 
@@ -137,7 +103,7 @@ Create k8s configmap:
 $ kubectl create -f kubewatch-configmap.yaml
 ```
 
-Create the [Pod](https://github.com/robusta-dev/kubewatch/blob/master/kubewatch.yaml) directly, or create your own deployment:
+Create the [Pod](./kubewatch.yaml) directly, or create your own deployment:
 
 ```console
 $ kubectl create -f kubewatch.yaml
@@ -204,10 +170,10 @@ $ kubectl create -f kubewatch.yaml
 ```
 
 #### Working with CRDs
-`kubewatch` can be configured to monitor Kubernetes Custom Resource Definitions (CRDs), allowing you to receive notifications when changes occur.
-To configure kubewatch to watch custom resources, you need to define the `customresources` section either in your values file or by using the `--set` flag with Helm commands. 
 
-Include the custom resource configuration in your values file:
+`kubewatch` can monitor Kubernetes Custom Resource Definitions (CRDs)
+in addition to built-in resources. Add a `customresources` section to
+your config:
 
 ```yaml
 customresources:
@@ -216,59 +182,16 @@ customresources:
     resource: prometheusrules
 ```
 
-Then deploy or upgrade `kubwatch` with `helm upgrade` or `helm install`
-
-
-Alternatively, you can pass this configuration directly using the `--set` flag:
-
-```console
-helm install kubewatch robusta/kubewatch --set='rbac.create=true,slack.channel=#YOUR_CHANNEL,slack.token=xoxb-YOUR_TOKEN,resourcesToWatch.pod=true,resourcesToWatch.daemonset=true,customresources[0].group=monitoring.coreos.com,customresources[0].version=v1,customresources[0].resource=prometheusrules'
-```
-#### Custom RBAC roles
-After defining custom resources, make sure that kubewatch has the necessary RBAC permissions to access the custom resources you've configured. Without the appropriate permissions, `kubewatch` will not be able to monitor your custom resources, and you won't receive notifications for changes.
-
-To grant these permissions, you can define custom RBAC roles using `customRoles` within the `rbac` section of your values file or by using the `--set` flag with Helm commands. This allows you to specify exactly which API groups, resources, and actions kubewatch should have access to.
-
-Here’s how you can configure the necessary permissions to monitor your resources:
-```yaml
-rbac:
-  create: true 
-  customRoles:
-    - apiGroups: ["monitoring.coreos.com"]
-      resources: ["prometheusrules"]
-      verbs: ["get", "list", "watch"]
-```
-
-Then deploy or upgrade `kubwatch` with `helm upgrade` or `helm install`
-
-
-Alternatively, you can pass this configuration directly using the `--set` flag:
-
-```console
-helm install kubewatch robusta/kubewatch --set='rbac.create=true,slack.channel=#YOUR_CHANNEL,slack.token=xoxb-YOUR_TOKEN,customRoles[0].apiGroups={monitoring.coreos.com},customRoles[0].resources={prometheusrules},customRoles[0].verbs={get,list,watch}'
-```
-
-#### Metrics
-`kubewatch` runs a Prometheus metrics endpoint at `/metrics` on port `2112` by default. This endpoint can be used to monitor health and the performance of `kubewatch`. 
-
-The `kubewatch_events_total` metric can help track the total number of Kubernetes events, categorized by resource type (e.g., `Pods`, `Deployments`) and event type (e.g., `Create`, `Delete`).
-
-You can change the default port (`2112`) on which the metrics server listens by setting the `LISTEN_ADDRESS` environment variable. 
-Format is `host:port`. `:5454` means any host, and port `5454`
-
-
-```yaml
-extraEnvVars:
-  - name: LISTEN_ADDRESS
-    value: ":5454"
-```
+Make sure the ServiceAccount has RBAC permissions (`get`, `list`,
+`watch`) on the corresponding API group and resource — extend
+`kubewatch-service-account.yaml` accordingly.
 
 ### Local Installation
 #### Using go package installer:
 
 ```console
 # Download and install kubewatch
-$ go get -u github.com/robusta-dev/kubewatch
+$ go install github.com/bitnami-labs/kubewatch@latest
 
 # Configure the notification channel
 $ kubewatch config add slack --channel <slack_channel> --token <slack_token>
@@ -294,13 +217,13 @@ INFO[0000] Kubewatch controller synced and ready         pkg=kubewatch-pod
 To Run Kubewatch Container interactively, place the config file in `$HOME/.kubewatch.yaml` location and use the following command.
 
 ```
-docker run --rm -it --network host -v $HOME/.kubewatch.yaml:/root/.kubewatch.yaml -v $HOME/.kube/config:/opt/bitnami/kubewatch/.kube/config --name <container-name> robustadev/kubewatch
+docker run --rm -it --network host -v $HOME/.kubewatch.yaml:/root/.kubewatch.yaml -v $HOME/.kube/config:/opt/bitnami/kubewatch/.kube/config --name <container-name> ghcr.io/nudgebee/kubewatch
 ```
 
 Example:
 
 ```
-$ docker run --rm -it --network host -v $HOME/.kubewatch.yaml:/root/.kubewatch.yaml -v $HOME/.kube/config:/opt/bitnami/kubewatch/.kube/config --name kubewatch-app robustadev/kubewatch
+$ docker run --rm -it --network host -v $HOME/.kubewatch.yaml:/root/.kubewatch.yaml -v $HOME/.kube/config:/opt/bitnami/kubewatch/.kube/config --name kubewatch-app ghcr.io/nudgebee/kubewatch
 
 ==> Writing config file...
 INFO[0000] Starting kubewatch controller                 pkg=kubewatch-service
@@ -317,7 +240,7 @@ INFO[0000] Processing add to namespace: default          pkg=kubewatch-namespace
 To Demonise Kubewatch container use
 
 ```
-$ docker run --rm -d --network host -v $HOME/.kubewatch.yaml:/root/.kubewatch.yaml -v $HOME/.kube/config:/opt/bitnami/kubewatch/.kube/config --name kubewatch-app robustadev/kubewatch
+$ docker run --rm -d --network host -v $HOME/.kubewatch.yaml:/root/.kubewatch.yaml -v $HOME/.kube/config:/opt/bitnami/kubewatch/.kube/config --name kubewatch-app ghcr.io/nudgebee/kubewatch
 ```
 
 # Configure
@@ -630,13 +553,12 @@ env:
 
 Clone the repository anywhere:
 ```console
-$ git clone https://github.com/bitnami-labs/kubewatch.git
+$ git clone https://github.com/nudgebee/kubewatch.git
 $ cd kubewatch
 $ go build
 ```
-or
 
-You can also use the Makefile directly:
+or use the Makefile:
 
 ```console
 $ make build
@@ -644,7 +566,7 @@ $ make build
 
 #### Prerequisites
 
-- You need to have [Go](http://golang.org) (v1.5 or later)  installed. Make sure to set `$GOPATH`
+- [Go](http://golang.org) at the version pinned in `go.mod` (currently 1.26.2).
 
 
 ### Using Docker
@@ -661,4 +583,6 @@ kubewatch           latest              919896d3cd90        3 minutes ago       
 
 # Contribution
 
-Refer to the [contribution guidelines](docs/CONTRIBUTION.md) to get started.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for build, test, and release
+process. Security issues should be reported via the policy in
+[SECURITY.md](./SECURITY.md).
