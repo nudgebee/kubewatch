@@ -9,7 +9,7 @@ require (
 	github.com/segmentio/textio v1.2.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/slack-go/slack v0.23.1
-	github.com/spf13/cobra v0.0.1
+	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/tbruyelle/hipchat-go v0.0.0-20160921153256-749fb9e14beb
 	gopkg.in/yaml.v3 v3.0.1
@@ -34,7 +34,7 @@ require (
 	github.com/google/go-querystring v0.0.0-20170111101155-53e6ce116135 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
-	github.com/inconshreveable/mousetrap v1.0.0 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
