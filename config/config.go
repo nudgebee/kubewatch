@@ -313,7 +313,10 @@ func (c *Config) CheckMissingResourceEnvvars() {
 	if (c.Handler.SlackWebhook.Slackwebhookurl == "") && (os.Getenv("KW_SLACK_WEBHOOK_URL") != "") {
 		c.Handler.SlackWebhook.Slackwebhookurl = os.Getenv("KW_SLACK_WEBHOOK_URL")
 	}
-	
+	if (c.Handler.Webhook.Url == "") && (os.Getenv("KW_WEBHOOK_URL") != "") {
+		c.Handler.Webhook.Url = os.Getenv("KW_WEBHOOK_URL")
+	}
+
 	// Check for sync environment variables
 	if !c.Sync.Enabled && os.Getenv("KW_SYNC_ENABLED") == "true" {
 		c.Sync.Enabled = true
