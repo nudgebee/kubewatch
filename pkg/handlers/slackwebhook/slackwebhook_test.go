@@ -14,12 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-/*
-Author: Richard Knechtel
-Company: Blast Motion
-Date: 12/27/2021
-*/
-
 package slackwebhook
 
 import (
@@ -30,26 +24,38 @@ import (
 	"github.com/bitnami-labs/kubewatch/config"
 )
 
+// Slack incoming webhooks bind a channel and a username to the URL itself,
+// so Init only requires the URL — channel/username/emoji are optional
+// per-message overrides.
 func TestWebhookInit(t *testing.T) {
-	s := &SlackWebhook{}
+	t.Setenv("KW_SLACK_CHANNEL", "")
+	t.Setenv("KW_SLACK_USERNAME", "")
+	t.Setenv("KW_SLACK_EMOJI", "")
+	t.Setenv("KW_SLACK_WEBHOOK_URL", "")
 
-	var Tests = []struct {
-		slackwebhook config.SlackWebhook
-		err          error
+	missingURL := fmt.Errorf(webhookErrMsg, "Missing Slack Webhook url")
+
+	tests := []struct {
+		name string
+		cfg  config.SlackWebhook
+		err  error
 	}{
-		{config.SlackWebhook{Channel: "foo", Username: "bar", Slackwebhookurl: "you"}, nil},
-		{config.SlackWebhook{Channel: "foo"}, fmt.Errorf(webhookErrMsg, "Missing Slack Webhook Username")},
-		{config.SlackWebhook{Username: "bar"}, fmt.Errorf(webhookErrMsg, "Missing Slack Webhook Channel")},
-		{config.SlackWebhook{Emoji: ":kubernetes:"}, fmt.Errorf(webhookErrMsg, "Missing Slack Webhook Channel")},
-		{config.SlackWebhook{Slackwebhookurl: "you"}, fmt.Errorf(webhookErrMsg, "Missing Slack Webhook Channel")},
-		{config.SlackWebhook{}, fmt.Errorf(webhookErrMsg, "Missing Slack Webhook Channel")},
+		{"all fields", config.SlackWebhook{Channel: "foo", Username: "bar", Slackwebhookurl: "you"}, nil},
+		{"only url", config.SlackWebhook{Slackwebhookurl: "you"}, nil},
+		{"only channel", config.SlackWebhook{Channel: "foo"}, missingURL},
+		{"only username", config.SlackWebhook{Username: "bar"}, missingURL},
+		{"only emoji", config.SlackWebhook{Emoji: ":kubernetes:"}, missingURL},
+		{"empty", config.SlackWebhook{}, missingURL},
 	}
 
-	for _, tt := range Tests {
-		c := &config.Config{}
-		c.Handler.SlackWebhook = tt.slackwebhook
-		if err := s.Init(c); !reflect.DeepEqual(err, tt.err) {
-			t.Fatalf("Init(): %v", err)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &SlackWebhook{}
+			c := &config.Config{}
+			c.Handler.SlackWebhook = tt.cfg
+			if err := s.Init(c); !reflect.DeepEqual(err, tt.err) {
+				t.Fatalf("Init() = %v, want %v", err, tt.err)
+			}
+		})
 	}
 }

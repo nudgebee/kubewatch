@@ -93,7 +93,8 @@ type ServiceConfig struct {
 
 // ServiceInfo represents all workload types (pod, deployment, statefulset, etc.)
 type ServiceInfo struct {
-	ResourceVersion int                    `json:"resource_version"`
+	// ResourceVersion is opaque per the Kubernetes API contract; do not parse.
+	ResourceVersion string                 `json:"resource_version"`
 	Name            string                 `json:"name"`
 	ServiceType     string                 `json:"service_type"`
 	Namespace       string                 `json:"namespace"`
@@ -128,7 +129,7 @@ type NodeInfo struct {
 	Pods              string                 `json:"pods"`
 	NodeInfo          map[string]interface{} `json:"node_info"`
 	Deleted           bool                   `json:"deleted"`
-	ResourceVersion   int                    `json:"resource_version"`
+	ResourceVersion   string                 `json:"resource_version"`
 	CPULimits         float64                `json:"cpu_limits"`
 	MemoryLimits      int                    `json:"memory_limits"`
 }
@@ -188,7 +189,7 @@ type JobInfo struct {
 	Completions     int       `json:"completions"`
 	Status          JobStatus `json:"status"`
 	JobData         JobData   `json:"job_data"`
-	ResourceVersion int       `json:"resource_version"`
+	ResourceVersion string    `json:"resource_version"`
 }
 
 // NamespaceInfo contains namespace information
@@ -198,7 +199,7 @@ type NamespaceInfo struct {
 	WorkloadCount   int     `json:"workload_count"`
 	PodCount        int     `json:"pod_count"`
 	CreationTime    *string `json:"creation_time,omitempty"`
-	ResourceVersion int     `json:"resource_version"`
+	ResourceVersion string  `json:"resource_version"`
 }
 
 // WorkloadSyncMetadata contains metadata about the sync operation

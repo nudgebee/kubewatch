@@ -313,7 +313,10 @@ func (c *Config) CheckMissingResourceEnvvars() {
 	if (c.Handler.SlackWebhook.Slackwebhookurl == "") && (os.Getenv("KW_SLACK_WEBHOOK_URL") != "") {
 		c.Handler.SlackWebhook.Slackwebhookurl = os.Getenv("KW_SLACK_WEBHOOK_URL")
 	}
-	
+	if (c.Handler.Webhook.Url == "") && (os.Getenv("KW_WEBHOOK_URL") != "") {
+		c.Handler.Webhook.Url = os.Getenv("KW_WEBHOOK_URL")
+	}
+
 	// Check for sync environment variables
 	if !c.Sync.Enabled && os.Getenv("KW_SYNC_ENABLED") == "true" {
 		c.Sync.Enabled = true
@@ -397,7 +400,6 @@ type RetryConfig struct {
 type WorkloadSyncConfig struct {
 	Enabled               bool `json:"enabled" yaml:"enabled"`
 	IncludeNodes          bool `json:"includeNodes" yaml:"includeNodes"`
-	IncludeServices       bool `json:"includeServices" yaml:"includeServices"`
 	IncludeHPA            bool `json:"includeHPA" yaml:"includeHPA"`
 	IncludeResourceStatus bool `json:"includeResourceStatus" yaml:"includeResourceStatus"`
 	IncludePodMetrics     bool `json:"includePodMetrics" yaml:"includePodMetrics"`
