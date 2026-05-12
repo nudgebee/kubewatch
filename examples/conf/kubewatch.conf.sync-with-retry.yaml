@@ -1,0 +1,34 @@
+handler:
+  webhook:
+    url: "http://localhost:6000/api/handle"
+    cert: ""
+    tlsskip: false
+  
+resource:
+  deployment: true
+  replicationcontroller: false
+  replicaset: false
+  daemonset: false
+  statefulset: false
+  services: false
+  pod: false
+  job: false
+  node: false
+
+namespace: ""
+
+sync:
+  enabled: true
+  interval: "1h"
+  compression: true
+  batchSize: 50
+  timeoutSeconds: 30
+  retry:
+    maxRetries: 5
+    initialInterval: "30s"
+    maxInterval: "5m"
+    multiplier: 2.0
+  workloadSnapshot:
+    enabled: true
+    includeNodes: true
+    includeServices: true
