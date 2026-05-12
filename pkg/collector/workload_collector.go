@@ -19,7 +19,6 @@ package collector
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -269,8 +268,6 @@ func (w *WorkloadCollector) collectNamespaces(ctx context.Context, namespaces *[
 
 // convertDeploymentToServiceInfo converts a deployment to ServiceInfo
 func (w *WorkloadCollector) convertDeploymentToServiceInfo(dep *apps_v1.Deployment) ServiceInfo {
-	resourceVersion := w.parseResourceVersion(dep.ResourceVersion)
-
 	// Create service config with default values
 	serviceConfig := &ServiceConfig{
 		Labels:      w.ensureLabels(dep.Labels),
@@ -296,7 +293,7 @@ func (w *WorkloadCollector) convertDeploymentToServiceInfo(dep *apps_v1.Deployme
 	statusDict := w.convertDeploymentStatusToDict(dep)
 
 	return ServiceInfo{
-		ResourceVersion: resourceVersion,
+		ResourceVersion: dep.ResourceVersion,
 		Name:            dep.Name,
 		ServiceType:     SERVICE_TYPE_DEPLOYMENT,
 		Namespace:       dep.Namespace,
@@ -314,8 +311,6 @@ func (w *WorkloadCollector) convertDeploymentToServiceInfo(dep *apps_v1.Deployme
 
 // convertDaemonSetToServiceInfo converts a daemonset to ServiceInfo
 func (w *WorkloadCollector) convertDaemonSetToServiceInfo(ds *apps_v1.DaemonSet) ServiceInfo {
-	resourceVersion := w.parseResourceVersion(ds.ResourceVersion)
-
 	serviceConfig := &ServiceConfig{
 		Labels:      w.ensureLabels(ds.Labels),
 		Containers:  w.extractContainers(ds.Spec.Template.Spec.Containers),
@@ -340,7 +335,7 @@ func (w *WorkloadCollector) convertDaemonSetToServiceInfo(ds *apps_v1.DaemonSet)
 	statusDict := w.convertDaemonSetStatusToDict(ds)
 
 	return ServiceInfo{
-		ResourceVersion: resourceVersion,
+		ResourceVersion: ds.ResourceVersion,
 		Name:            ds.Name,
 		ServiceType:     SERVICE_TYPE_DAEMONSET,
 		Namespace:       ds.Namespace,
@@ -358,8 +353,6 @@ func (w *WorkloadCollector) convertDaemonSetToServiceInfo(ds *apps_v1.DaemonSet)
 
 // convertStatefulSetToServiceInfo converts a statefulset to ServiceInfo
 func (w *WorkloadCollector) convertStatefulSetToServiceInfo(ss *apps_v1.StatefulSet) ServiceInfo {
-	resourceVersion := w.parseResourceVersion(ss.ResourceVersion)
-
 	serviceConfig := &ServiceConfig{
 		Labels:      w.ensureLabels(ss.Labels),
 		Containers:  w.extractContainers(ss.Spec.Template.Spec.Containers),
@@ -384,7 +377,7 @@ func (w *WorkloadCollector) convertStatefulSetToServiceInfo(ss *apps_v1.Stateful
 	statusDict := w.convertStatefulSetStatusToDict(ss)
 
 	return ServiceInfo{
-		ResourceVersion: resourceVersion,
+		ResourceVersion: ss.ResourceVersion,
 		Name:            ss.Name,
 		ServiceType:     SERVICE_TYPE_STATEFULSET,
 		Namespace:       ss.Namespace,
@@ -402,8 +395,6 @@ func (w *WorkloadCollector) convertStatefulSetToServiceInfo(ss *apps_v1.Stateful
 
 // convertPodToServiceInfo converts a pod to ServiceInfo
 func (w *WorkloadCollector) convertPodToServiceInfo(pod *api_v1.Pod) ServiceInfo {
-	resourceVersion := w.parseResourceVersion(pod.ResourceVersion)
-
 	// Convert QOSClass to string safely
 	var qosClass *string
 	if pod.Status.QOSClass != "" {
@@ -436,7 +427,7 @@ func (w *WorkloadCollector) convertPodToServiceInfo(pod *api_v1.Pod) ServiceInfo
 	statusDict := w.convertPodStatusToDict(pod)
 
 	return ServiceInfo{
-		ResourceVersion: resourceVersion,
+		ResourceVersion: pod.ResourceVersion,
 		Name:            pod.Name,
 		ServiceType:     SERVICE_TYPE_POD,
 		Namespace:       pod.Namespace,
@@ -549,7 +540,7 @@ func (w *WorkloadCollector) convertJobToJobInfo(job *batch_v1.Job) JobInfo {
 		Completions:     completions,
 		Status:          jobStatus,
 		JobData:         jobData,
-		ResourceVersion: w.parseResourceVersion(job.ResourceVersion),
+		ResourceVersion: job.ResourceVersion,
 	}
 }
 
@@ -655,7 +646,7 @@ func (w *WorkloadCollector) convertNodeToNodeInfo(node *api_v1.Node) NodeInfo {
 		Pods:              "",
 		NodeInfo:          nodeInfoMap,
 		Deleted:           false,
-		ResourceVersion:   w.parseResourceVersion(node.ResourceVersion),
+		ResourceVersion:   node.ResourceVersion,
 		CPULimits:         0,
 		MemoryLimits:      0,
 	}
@@ -945,16 +936,6 @@ func (w *WorkloadCollector) ensureLabels(labels map[string]string) map[string]st
 	return labels
 }
 
-func (w *WorkloadCollector) parseResourceVersion(version string) int {
-	if version == "" {
-		return 0
-	}
-	if v, err := strconv.Atoi(version); err == nil {
-		return v
-	}
-	return 0
-}
-
 func (w *WorkloadCollector) isHelmRelease(labels map[string]string) *bool {
 	if labels == nil {
 		return nil
@@ -1189,7 +1170,7 @@ func (w *WorkloadCollector) convertNamespaceToNamespaceInfo(ns *api_v1.Namespace
 		WorkloadCount:   0, // Will be calculated in calculateAggregatedValues
 		PodCount:        0, // Will be calculated in calculateAggregatedValues
 		CreationTime:    &creationTime,
-		ResourceVersion: w.parseResourceVersion(ns.ResourceVersion),
+		ResourceVersion: ns.ResourceVersion,
 	}
 }
 
