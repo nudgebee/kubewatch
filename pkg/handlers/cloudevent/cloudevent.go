@@ -84,18 +84,6 @@ type SyncWebhookMessage struct {
 	Metadata        collector.WorkloadSyncMetadata    `json:"metadata"`
 }
 
-// CloudEventSnapshotMessage wraps SyncWebhookMessage in CloudEvent format
-type CloudEventSnapshotMessage struct {
-	SpecVersion     string             `json:"specversion"`
-	Type            string             `json:"type"`
-	Source          string             `json:"source"`
-	Subject         string             `json:"subject"`
-	ID              string             `json:"id"`
-	Time            time.Time          `json:"time"`
-	DataContentType string             `json:"datacontenttype"`
-	Data            SyncWebhookMessage `json:"data"`
-}
-
 func (m *CloudEvent) Init(c *config.Config) error {
 	m.Url = c.Handler.CloudEvent.Url
 	m.StartTime = uint64(time.Now().Unix())
@@ -140,7 +128,7 @@ func (m *CloudEvent) prepareMessage(e event.Event) *CloudEventMessage {
 	return &CloudEventMessage{
 		SpecVersion:     "1.0",
 		Type:            "KUBERNETES_TOPOLOGY_CHANGE",
-		Source:          "https://github.com/aantn/kubewatch",
+		Source:          "https://github.com/nudgebee/kubewatch",
 		ID:              fmt.Sprintf("%v-%v", m.StartTime, m.Counter),
 		Time:            time.Now(), // TODO: verify that time format is correct - note that this is the time of sending not time of event
 		DataContentType: "application/json",
@@ -148,7 +136,7 @@ func (m *CloudEvent) prepareMessage(e event.Event) *CloudEventMessage {
 			Operation:   m.formatReason(e),
 			Kind:        e.Kind,
 			ApiVersion:  e.ApiVersion,
-			ClusterUid:  "TODO",
+			ClusterUid:  "",
 			Description: e.Message(),
 			Obj:         e.Obj,
 			OldObj:      e.OldObj,
@@ -190,12 +178,12 @@ func (m *CloudEvent) postMessage(webhookMessage *CloudEventMessage) error {
 	return nil
 }
 
-// HandleWorkloadSnapshot handles workload snapshot data as CloudEvents
+// HandleWorkloadSnapshot handles workload snapshot data.
+// Snapshots are sent un-enveloped (not wrapped in CloudEvent format) so the
+// receiver consumes the same payload shape as the webhook handler emits.
 func (m *CloudEvent) HandleWorkloadSnapshot(snapshot *collector.ClusterWorkloadSnapshot, metadata collector.WorkloadSyncMetadata) error {
-	m.Counter++ // Increment counter for snapshot events too
+	m.Counter++
 
-	// Send the SyncWebhookMessage directly, not wrapped in CloudEvent format
-	// This matches what the Python pydantic model expects
 	message := &SyncWebhookMessage{
 		Type:            "cluster_snapshot",
 		Timestamp:       time.Now(),
