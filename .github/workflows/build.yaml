@@ -59,7 +59,7 @@ jobs:
           flavor: |
             latest=auto
           tags: |
-            type=ref,event=branch,prefix=master-,suffix=-{{sha}},enable=${{ github.ref == 'refs/heads/master' }}
+            type=sha,prefix=master-,enable=${{ github.ref == 'refs/heads/master' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
