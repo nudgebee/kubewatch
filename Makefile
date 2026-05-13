@@ -6,11 +6,13 @@ VERSION=
 BUILD=
 
 PKG            = github.com/bitnami-labs/kubewatch
-TRAVIS_COMMIT ?= `git describe --tags`
+GIT_COMMIT    ?= `git describe --tags`
+VERSION       ?= dev
 GOCMD          = go
 BUILD_DATE     = `date +%FT%T%z`
 GOFLAGS       ?= $(GOFLAGS:)
-LDFLAGS       := "-X '$(PKG)/cmd.gitCommit=$(TRAVIS_COMMIT)' \
+LDFLAGS       := "-X '$(PKG)/cmd.version=$(VERSION)' \
+		          -X '$(PKG)/cmd.gitCommit=$(GIT_COMMIT)' \
 		          -X '$(PKG)/cmd.buildDate=$(BUILD_DATE)'"
 
 default: build test
