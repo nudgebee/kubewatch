@@ -194,7 +194,7 @@ Make sure the ServiceAccount has RBAC permissions (`get`, `list`,
 $ git clone https://github.com/nudgebee/kubewatch.git
 $ cd kubewatch
 $ make build
-$ install -m 0755 kubewatch /usr/local/bin/kubewatch
+$ sudo install -m 0755 kubewatch /usr/local/bin/kubewatch
 
 # Configure the notification channel
 $ kubewatch config add slack --channel <slack_channel> --token <slack_token>
