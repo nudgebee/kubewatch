@@ -1,6 +1,6 @@
 module github.com/bitnami-labs/kubewatch
 
-go 1.26.2
+go 1.26.3
 
 require (
 	github.com/fatih/structtag v1.2.0
