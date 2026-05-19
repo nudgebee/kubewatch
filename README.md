@@ -187,11 +187,14 @@ Make sure the ServiceAccount has RBAC permissions (`get`, `list`,
 `kubewatch-service-account.yaml` accordingly.
 
 ### Local Installation
-#### Using go package installer:
+#### Build from source:
 
 ```console
-# Download and install kubewatch
-$ go install github.com/bitnami-labs/kubewatch@latest
+# Clone and build kubewatch
+$ git clone https://github.com/nudgebee/kubewatch.git
+$ cd kubewatch
+$ make build
+$ sudo install -m 0755 kubewatch /usr/local/bin/kubewatch
 
 # Configure the notification channel
 $ kubewatch config add slack --channel <slack_channel> --token <slack_token>
@@ -566,7 +569,7 @@ $ make build
 
 #### Prerequisites
 
-- [Go](http://golang.org) at the version pinned in `go.mod` (currently 1.26.2).
+- [Go](http://golang.org) at the version pinned in `go.mod` (currently 1.26.3).
 
 
 ### Using Docker

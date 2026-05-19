@@ -6,7 +6,7 @@ the README for what differs in this fork.
 
 ## Building locally
 
-Requires Go matching the version in `go.mod` (currently 1.26.2).
+Requires Go matching the version in `go.mod` (currently 1.26.3).
 
 ```bash
 go build ./...

@@ -23,7 +23,7 @@ Info:
 Example Message send to slack webhook (In Python):
 
   # Example Webhook URL:
-  url = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX""
+  url = "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
   # Message to Slack
   msg = {
       "channel": "#my-alerts",
