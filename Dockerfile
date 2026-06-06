@@ -1,7 +1,7 @@
 # Pinned to >= 1.26.2 to pick up Go stdlib CVE patches (CVE-2026-32280/32281/32283/33810).
 # Alpine variant kept for small image size and multi-arch builds; binary is statically
 # linked (CGO_ENABLED=0) so glibc CVEs in other base images do not apply here.
-FROM golang:1.26.3-alpine AS builder
+FROM golang:1.26.4-alpine AS builder
 ARG TARGETARCH
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
