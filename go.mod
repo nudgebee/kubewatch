@@ -7,8 +7,8 @@ require (
 	github.com/mkmik/multierror v0.4.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/segmentio/textio v1.2.0
-	github.com/sirupsen/logrus v1.9.4
-	github.com/slack-go/slack v0.27.0
+	github.com/sirupsen/logrus v1.10.0
+	github.com/slack-go/slack v0.29.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/tbruyelle/hipchat-go v0.0.0-20160921153256-749fb9e14beb
