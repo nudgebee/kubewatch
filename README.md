@@ -27,6 +27,23 @@ HTTP/CloudEvent webhooks.
   publishes.
 - **CloudEvent and webhook handlers** carry both the change stream and
   the periodic snapshots; receivers can consume either or both.
+- **Bounded send queue** — each watched kind queues object keys, not
+  individual changes, so memory stays bounded by the number of objects
+  when the receiver is slow. Changes to one object that are still
+  waiting are merged (first old object, latest new object) and sent in
+  order. `managedFields` is stripped before objects are cached.
+
+  ```yaml
+  queue:
+    workers: 4        # concurrent senders per kind (KW_QUEUE_WORKERS)
+    maxPending: 5000  # objects waiting per kind; beyond it the longest-waiting
+                      # objects' changes are dropped and counted (KW_QUEUE_MAX_PENDING);
+                      # negative disables the cap
+  ```
+
+  Queue depth, wait time and drops are exported on `/metrics` as
+  `kubewatch_workqueue_*{name="<Kind>"}` and
+  `kubewatch_events_dropped_total`.
 
 See `examples/conf/kubewatch.conf.sync-with-retry.yaml` for a sample
 configuration.
