@@ -109,8 +109,12 @@ func (m *CloudEvent) Init(c *config.Config) error {
 	// Several workers per resource type send through this client at once.
 	// The default transport keeps only two idle connections per host, so
 	// the rest would be re-dialled for every event.
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.MaxIdleConnsPerHost = 64
+	var transport http.RoundTripper = http.DefaultTransport
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		t = t.Clone()
+		t.MaxIdleConnsPerHost = 64
+		transport = t
+	}
 	m.httpClient = &http.Client{
 		Timeout:   timeout,
 		Transport: transport,
