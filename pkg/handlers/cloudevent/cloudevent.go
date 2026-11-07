@@ -24,7 +24,9 @@ import (
 
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/bitnami-labs/kubewatch/config"
@@ -104,16 +106,22 @@ func (m *CloudEvent) Init(c *config.Config) error {
 		timeout = time.Duration(c.Sync.TimeoutSeconds) * time.Second
 	}
 
+	// Several workers per resource type send through this client at once.
+	// The default transport keeps only two idle connections per host, so
+	// the rest would be re-dialled for every event.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = 64
 	m.httpClient = &http.Client{
-		Timeout: timeout,
+		Timeout:   timeout,
+		Transport: transport,
 	}
 
 	return nil
 }
 
+// Handle is called concurrently by every resource type's workers.
 func (m *CloudEvent) Handle(e event.Event) {
-	m.Counter++ // TODO: do we have to worry about threadsafety here?
-	message := m.prepareMessage(e)
+	message := m.prepareMessage(e, atomic.AddUint64(&m.Counter, 1))
 
 	err := m.postMessage(message)
 	if err != nil {
@@ -121,15 +129,15 @@ func (m *CloudEvent) Handle(e event.Event) {
 		return
 	}
 
-	logrus.Printf("Message successfully sent to %s at %s ", m.Url, time.Now())
+	logrus.Debugf("Message successfully sent to %s at %s ", m.Url, time.Now())
 }
 
-func (m *CloudEvent) prepareMessage(e event.Event) *CloudEventMessage {
+func (m *CloudEvent) prepareMessage(e event.Event, seq uint64) *CloudEventMessage {
 	return &CloudEventMessage{
 		SpecVersion:     "1.0",
 		Type:            "KUBERNETES_TOPOLOGY_CHANGE",
 		Source:          "https://github.com/nudgebee/kubewatch",
-		ID:              fmt.Sprintf("%v-%v", m.StartTime, m.Counter),
+		ID:              fmt.Sprintf("%v-%v", m.StartTime, seq),
 		Time:            time.Now(), // TODO: verify that time format is correct - note that this is the time of sending not time of event
 		DataContentType: "application/json",
 		Data: CloudEventMessageData{
@@ -174,6 +182,11 @@ func (m *CloudEvent) postMessage(webhookMessage *CloudEventMessage) error {
 		return err
 	}
 	defer resp.Body.Close()
+	// Read the body to the end so the connection goes back to the pool.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("cloudevent endpoint %s returned HTTP %d", m.Url, resp.StatusCode)
+	}
 
 	return nil
 }
@@ -182,7 +195,7 @@ func (m *CloudEvent) postMessage(webhookMessage *CloudEventMessage) error {
 // Snapshots are sent un-enveloped (not wrapped in CloudEvent format) so the
 // receiver consumes the same payload shape as the webhook handler emits.
 func (m *CloudEvent) HandleWorkloadSnapshot(snapshot *collector.ClusterWorkloadSnapshot, metadata collector.WorkloadSyncMetadata) error {
-	m.Counter++
+	atomic.AddUint64(&m.Counter, 1)
 
 	message := &SyncWebhookMessage{
 		Type:            "cluster_snapshot",

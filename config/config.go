@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -98,7 +99,28 @@ type Config struct {
 
 	// Sync configuration for scheduled workload snapshots
 	Sync SyncConfig `json:"sync" yaml:"sync"`
+
+	// Queue sizes the per-resource-type send queue.
+	Queue QueueConfig `json:"queue" yaml:"queue"`
 }
+
+// QueueConfig sizes the send queue each watched resource type has.
+type QueueConfig struct {
+	// Workers sending events concurrently per resource type. Events for
+	// one object are still sent in order. Default 4.
+	Workers int `json:"workers" yaml:"workers"`
+	// MaxPending caps the objects with unsent events per resource type.
+	// Above it, the objects that have waited longest lose their pending
+	// events (counted in kubewatch_events_dropped_total). Default 5000;
+	// negative disables the cap.
+	MaxPending int `json:"maxPending" yaml:"maxPending"`
+}
+
+// Queue defaults.
+const (
+	DefaultQueueWorkers    = 4
+	DefaultQueueMaxPending = 5000
+)
 
 // Slack contains slack configuration
 type Slack struct {
@@ -332,6 +354,27 @@ func (c *Config) CheckMissingResourceEnvvars() {
 	}
 	if !c.Handler.Webhook.Compression && os.Getenv("KW_WEBHOOK_COMPRESSION") == "true" {
 		c.Handler.Webhook.Compression = true
+	}
+	if c.Queue.Workers == 0 {
+		if n, err := strconv.Atoi(os.Getenv("KW_QUEUE_WORKERS")); err == nil {
+			c.Queue.Workers = n
+		}
+	}
+	if c.Queue.MaxPending == 0 {
+		if n, err := strconv.Atoi(os.Getenv("KW_QUEUE_MAX_PENDING")); err == nil {
+			c.Queue.MaxPending = n
+		}
+	}
+	c.SetQueueDefaults()
+}
+
+// SetQueueDefaults fills unset queue settings.
+func (c *Config) SetQueueDefaults() {
+	if c.Queue.Workers <= 0 {
+		c.Queue.Workers = DefaultQueueWorkers
+	}
+	if c.Queue.MaxPending == 0 {
+		c.Queue.MaxPending = DefaultQueueMaxPending
 	}
 }
 

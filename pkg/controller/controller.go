@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -58,7 +59,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-const maxRetries = 5
 const V1 = "v1"
 const AUTOSCALING_V1 = "autoscaling/v1"
 const APPS_V1 = "apps/v1"
@@ -84,9 +84,19 @@ type Event struct {
 type Controller struct {
 	logger       *logrus.Entry
 	clientset    kubernetes.Interface
-	queue        workqueue.RateLimitingInterface
+	queue        workqueue.TypedInterface[string] // object keys; events wait in pending
+	pending      *pendingEvents
 	informer     cache.SharedIndexInformer
 	eventHandler handlers.Handler
+	resourceType string
+	apiVersion   string
+	workers      int
+}
+
+// queueOptions sizes every resource controller's send queue.
+type queueOptions struct {
+	workers    int // concurrent senders per resource type
+	maxPending int // objects allowed to wait per resource type; <= 0 unbounded
 }
 
 func objName(obj interface{}) string {
@@ -106,6 +116,11 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 		},
 		[]string{"resourceType", "eventType"},
 	)
+
+	conf.SetQueueDefaults()
+	opts := queueOptions{workers: conf.Queue.Workers, maxPending: conf.Queue.MaxPending}
+	logrus.Infof("Send queue: %d workers per resource type, at most %d objects waiting per type (negative = unbounded)",
+		opts.workers, opts.maxPending)
 
 	if _, err := rest.InClusterConfig(); err != nil {
 		kubeClient = utils.GetClientOutOfCluster()
@@ -133,7 +148,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		allCoreEventsController := newResourceController(kubeClient, eventHandler, allCoreEventsInformer, objName(api_v1.Event{}), V1, kubewatchEventsMetrics)
+		allCoreEventsController := newResourceController(kubeClient, eventHandler, allCoreEventsInformer, objName(api_v1.Event{}), V1, kubewatchEventsMetrics, opts)
 		stopAllCoreEventsCh := make(chan struct{})
 		defer close(stopAllCoreEventsCh)
 
@@ -157,7 +172,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		allEventsController := newResourceController(kubeClient, eventHandler, allEventsInformer, objName(events_v1.Event{}), EVENTS_V1, kubewatchEventsMetrics)
+		allEventsController := newResourceController(kubeClient, eventHandler, allEventsInformer, objName(events_v1.Event{}), EVENTS_V1, kubewatchEventsMetrics, opts)
 		stopAllEventsCh := make(chan struct{})
 		defer close(stopAllEventsCh)
 
@@ -179,7 +194,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.Pod{}), V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.Pod{}), V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -201,7 +216,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(autoscaling_v1.HorizontalPodAutoscaler{}), AUTOSCALING_V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(autoscaling_v1.HorizontalPodAutoscaler{}), AUTOSCALING_V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -224,7 +239,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(apps_v1.DaemonSet{}), APPS_V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(apps_v1.DaemonSet{}), APPS_V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -246,7 +261,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(apps_v1.StatefulSet{}), APPS_V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(apps_v1.StatefulSet{}), APPS_V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -268,7 +283,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(apps_v1.ReplicaSet{}), APPS_V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(apps_v1.ReplicaSet{}), APPS_V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -290,7 +305,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.Service{}), V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.Service{}), V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -312,7 +327,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(apps_v1.Deployment{}), APPS_V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(apps_v1.Deployment{}), APPS_V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -334,7 +349,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.Namespace{}), V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.Namespace{}), V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -356,7 +371,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.ReplicationController{}), V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.ReplicationController{}), V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -378,7 +393,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(batch_v1.Job{}), BATCH_V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(batch_v1.Job{}), BATCH_V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -400,7 +415,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.Node{}), V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.Node{}), V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -422,7 +437,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.ServiceAccount{}), V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.ServiceAccount{}), V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -444,7 +459,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(rbac_v1.ClusterRole{}), RBAC_V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(rbac_v1.ClusterRole{}), RBAC_V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -466,7 +481,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(rbac_v1.ClusterRoleBinding{}), RBAC_V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(rbac_v1.ClusterRoleBinding{}), RBAC_V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -488,7 +503,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.PersistentVolume{}), V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.PersistentVolume{}), V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -510,7 +525,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.Secret{}), V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.Secret{}), V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -532,7 +547,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.ConfigMap{}), V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(api_v1.ConfigMap{}), V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -554,7 +569,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, objName(networking_v1.Ingress{}), NETWORKING_V1, kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, objName(networking_v1.Ingress{}), NETWORKING_V1, kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -585,7 +600,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, crd.Resource, fmt.Sprintf("%s/%s", crd.Group, crd.Version), kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, crd.Resource, fmt.Sprintf("%s/%s", crd.Group, crd.Version), kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 
@@ -657,7 +672,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 				cache.Indexers{},
 			)
 
-			c := newResourceController(kubeClient, eventHandler, informer, "Rollout", rolloutGVR.Version, kubewatchEventsMetrics)
+			c := newResourceController(kubeClient, eventHandler, informer, "Rollout", rolloutGVR.Version, kubewatchEventsMetrics, opts)
 			stopCh := make(chan struct{})
 			defer close(stopCh)
 
@@ -750,7 +765,7 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 			cache.Indexers{},
 		)
 
-		c := newResourceController(kubeClient, eventHandler, informer, fmt.Sprintf("%s/%s", crd.Resource, crd.Group), fmt.Sprintf("%s/%s", crd.Group, crd.Version), kubewatchEventsMetrics)
+		c := newResourceController(kubeClient, eventHandler, informer, fmt.Sprintf("%s/%s", crd.Resource, crd.Group), fmt.Sprintf("%s/%s", crd.Group, crd.Version), kubewatchEventsMetrics, opts)
 		stopCh := make(chan struct{})
 		defer close(stopCh)
 		go c.Run(stopCh)
@@ -782,78 +797,96 @@ func Start(conf *config.Config, eventHandler handlers.Handler) {
 	<-sigterm
 }
 
-func newResourceController(client kubernetes.Interface, eventHandler handlers.Handler, informer cache.SharedIndexInformer, resourceType string, apiVersion string, kubewatchEventsMetrics *prometheus.CounterVec) *Controller {
-	queue := workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
-	var newEvent Event
-	var err error
+func newResourceController(client kubernetes.Interface, eventHandler handlers.Handler, informer cache.SharedIndexInformer, resourceType string, apiVersion string, kubewatchEventsMetrics *prometheus.CounterVec, opts queueOptions) *Controller {
+	logger := logrus.WithField("pkg", "kubewatch-"+resourceType)
+	// managedFields is server-side-apply bookkeeping, often 40% of an
+	// object's JSON, and no receiver reads it. Strip it before the object
+	// enters the informer cache so neither the cache nor the payloads carry it.
+	if err := informer.SetTransform(stripManagedFields); err != nil {
+		logger.Warnf("cannot strip managedFields from cached objects: %v", err)
+	}
+	queue := workqueue.NewTypedWithConfig(workqueue.TypedQueueConfig[string]{
+		Name:            resourceType,
+		MetricsProvider: queueMetricsProvider{},
+	})
+	pending := newPendingEvents(opts.maxPending, func(n int) {
+		queueDropped.WithLabelValues(resourceType).Add(float64(n))
+	})
+	workers := opts.workers
+	if workers < 1 {
+		workers = 1
+	}
+
+	enqueue := func(key, eventType string, obj, oldObj interface{}) {
+		ev := queuedEvent{eventType: eventType}
+		ev.obj, _ = obj.(runtime.Object)
+		if obj != nil && ev.obj == nil {
+			logger.Errorf("cannot convert to runtime.Object for %s on %v", eventType, obj)
+		}
+		if oldObj != nil {
+			var ok bool
+			if ev.oldObj, ok = oldObj.(runtime.Object); !ok {
+				logger.Errorf("cannot convert old to runtime.Object for %s on %v", eventType, oldObj)
+			}
+		}
+		logger.Debugf("Queueing %s of %v: %s", eventType, resourceType, key)
+		pending.add(key, ev)
+		queue.Add(key)
+		kubewatchEventsMetrics.WithLabelValues(resourceType, eventType).Inc()
+	}
+
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
-			var ok bool
-			newEvent.namespace = "" // namespace retrived in processItem incase namespace value is empty
-			newEvent.key, err = cache.MetaNamespaceKeyFunc(obj)
-			newEvent.eventType = "create"
-			newEvent.resourceType = resourceType
-			newEvent.apiVersion = apiVersion
-			newEvent.obj, ok = obj.(runtime.Object)
-			if !ok {
-				logrus.WithField("pkg", "kubewatch-"+resourceType).Errorf("cannot convert to runtime.Object for add on %v", obj)
+			key, err := cache.MetaNamespaceKeyFunc(obj)
+			if err != nil {
+				logger.Errorf("cannot key added object: %v", err)
+				return
 			}
-			logrus.WithField("pkg", "kubewatch-"+resourceType).Infof("Processing add to %v: %s", resourceType, newEvent.key)
-			if err == nil {
-				queue.Add(newEvent)
-			}
-
-			kubewatchEventsMetrics.WithLabelValues(resourceType, "create").Inc()
+			enqueue(key, "create", obj, nil)
 		},
 		UpdateFunc: func(old, new interface{}) {
-			var ok bool
-			newEvent.namespace = "" // namespace retrived in processItem incase namespace value is empty
-			newEvent.key, err = cache.MetaNamespaceKeyFunc(old)
-			newEvent.eventType = "update"
-			newEvent.resourceType = resourceType
-			newEvent.apiVersion = apiVersion
-			newEvent.obj, ok = new.(runtime.Object)
-			if !ok {
-				logrus.WithField("pkg", "kubewatch-"+resourceType).Errorf("cannot convert to runtime.Object for update on %v", new)
+			key, err := cache.MetaNamespaceKeyFunc(old)
+			if err != nil {
+				logger.Errorf("cannot key updated object: %v", err)
+				return
 			}
-			newEvent.oldObj, ok = old.(runtime.Object)
-			if !ok {
-				logrus.WithField("pkg", "kubewatch-"+resourceType).Errorf("cannot convert old to runtime.Object for update on %v", old)
-			}
-			logrus.WithField("pkg", "kubewatch-"+resourceType).Infof("Processing update to %v: %s", resourceType, newEvent.key)
-			if err == nil {
-				queue.Add(newEvent)
-			}
-
-			kubewatchEventsMetrics.WithLabelValues(resourceType, "update").Inc()
+			enqueue(key, "update", new, old)
 		},
 		DeleteFunc: func(obj interface{}) {
-			var ok bool
-			newEvent.namespace = "" // namespace retrived in processItem incase namespace value is empty
-			newEvent.key, err = cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
-			newEvent.eventType = "delete"
-			newEvent.resourceType = resourceType
-			newEvent.apiVersion = apiVersion
-			newEvent.obj, ok = obj.(runtime.Object)
-			if !ok {
-				logrus.WithField("pkg", "kubewatch-"+resourceType).Errorf("cannot convert to runtime.Object for delete on %v", obj)
+			key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
+			if err != nil {
+				logger.Errorf("cannot key deleted object: %v", err)
+				return
 			}
-			logrus.WithField("pkg", "kubewatch-"+resourceType).Infof("Processing delete to %v: %s", resourceType, newEvent.key)
-			if err == nil {
-				queue.Add(newEvent)
+			// A delete missed while the watch was down arrives as a
+			// tombstone wrapping the last known state.
+			if d, ok := obj.(cache.DeletedFinalStateUnknown); ok {
+				obj = d.Obj
 			}
-
-			kubewatchEventsMetrics.WithLabelValues(resourceType, "delete").Inc()
+			enqueue(key, "delete", obj, nil)
 		},
 	})
 
 	return &Controller{
-		logger:       logrus.WithField("pkg", "kubewatch-"+resourceType),
+		logger:       logger,
 		clientset:    client,
 		informer:     informer,
 		queue:        queue,
+		pending:      pending,
 		eventHandler: eventHandler,
+		resourceType: resourceType,
+		apiVersion:   apiVersion,
+		workers:      workers,
 	}
+}
+
+// stripManagedFields is the informer transform for every watched type.
+// Objects the transform cannot read metadata from (tombstones) pass through.
+func stripManagedFields(obj interface{}) (interface{}, error) {
+	if accessor, err := meta.Accessor(obj); err == nil {
+		accessor.SetManagedFields(nil)
+	}
+	return obj, nil
 }
 
 // Run starts the kubewatch controller
@@ -871,9 +904,14 @@ func (c *Controller) Run(stopCh <-chan struct{}) {
 		return
 	}
 
-	c.logger.Info("Kubewatch controller synced and ready")
+	c.logger.Infof("Kubewatch controller synced and ready (%d workers)", c.workers)
 
-	wait.Until(c.runWorker, time.Second, stopCh)
+	// The workqueue never hands one key to two workers at once, so events
+	// for the same object are still sent in order.
+	for i := 0; i < c.workers; i++ {
+		go wait.Until(c.runWorker, time.Second, stopCh)
+	}
+	<-stopCh
 }
 
 // HasSynced is required for the cache.Controller interface.
@@ -893,26 +931,27 @@ func (c *Controller) runWorker() {
 }
 
 func (c *Controller) processNextItem() bool {
-	newEvent, quit := c.queue.Get()
-
+	key, quit := c.queue.Get()
 	if quit {
 		return false
 	}
-	defer c.queue.Done(newEvent)
-	err := c.processItem(newEvent.(Event))
-	if err == nil {
-		// No error, reset the ratelimit counters
-		c.queue.Forget(newEvent)
-	} else if c.queue.NumRequeues(newEvent) < maxRetries {
-		c.logger.Errorf("Error processing %s (will retry): %v", newEvent.(Event).key, err)
-		c.queue.AddRateLimited(newEvent)
-	} else {
-		// err != nil and too many retries
-		c.logger.Errorf("Error processing %s (giving up): %v", newEvent.(Event).key, err)
-		c.queue.Forget(newEvent)
-		utilruntime.HandleError(err)
+	defer c.queue.Done(key)
+	// Handlers report delivery failures themselves and processItem only
+	// fails on a store read that cannot fail, so nothing is retried.
+	for _, ev := range c.pending.take(key) {
+		err := c.processItem(Event{
+			key:          key,
+			eventType:    ev.eventType,
+			resourceType: c.resourceType,
+			apiVersion:   c.apiVersion,
+			obj:          ev.obj,
+			oldObj:       ev.oldObj,
+		})
+		if err != nil {
+			c.logger.Errorf("Error processing %s: %v", key, err)
+			utilruntime.HandleError(err)
+		}
 	}
-
 	return true
 }
 
