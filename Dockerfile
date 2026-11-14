@@ -2,7 +2,7 @@
 # stdlib CVEs that 1.26.5 carries).
 # Alpine variant kept for small image size and multi-arch builds; binary is statically
 # linked (CGO_ENABLED=0) so glibc CVEs in other base images do not apply here.
-FROM golang:1.27.3-alpine AS builder
+FROM golang:1.27.4-alpine AS builder
 ARG TARGETARCH
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
