@@ -2,7 +2,7 @@
 # stdlib CVEs that 1.26.5 carries).
 # The builder stays on Alpine (small, multi-arch); the binary is statically linked
 # (CGO_ENABLED=0), so only the UBI runtime stage below ships in the image.
-FROM golang:1.27.3-alpine AS builder
+FROM golang:1.27.4-alpine AS builder
 ARG TARGETARCH
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown
